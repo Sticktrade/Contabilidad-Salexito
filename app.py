@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import openpyxl
 import re
+import json
+import base64
 from datetime import datetime, date
 import plotly.express as px
 import io
@@ -210,7 +212,7 @@ def get_db_engine():
 engine, db_type, conn_error = get_db_engine()
 
 if conn_error and "SUPABASE_URL" in st.secrets:
-    st.error(f"⚠️ **Error al conectar a Supabase:**\n\n`{conn_error}`")
+    st.error(f"⚠️ Error al conectar a Supabase:\n\n{conn_error}")
 
 def init_db():
     try:
@@ -257,6 +259,33 @@ def init_db():
         st.warning(f"Error inicializando tablas: {ex}")
 
 init_db()
+
+# -----------------------------------------------------------------------------
+# FUNCIONES AUXILIARES PARA COMPROBANTES Y MANEJO DE ARCHIVOS
+# -----------------------------------------------------------------------------
+def encode_file_to_json(uploaded_file):
+    if uploaded_file is None:
+        return ""
+    file_bytes = uploaded_file.getvalue()
+    b64_str = base64.b64encode(file_bytes).decode('utf-8')
+    return json.dumps({
+        "name": uploaded_file.name,
+        "type": uploaded_file.type,
+        "data": b64_str
+    })
+
+def decode_comprobante_json(comp_str):
+    if not comp_str or not str(comp_str).startswith("{"):
+        return None
+    try:
+        data = json.loads(comp_str)
+        return {
+            "name": data.get("name", "comprobante"),
+            "type": data.get("type", "application/octet-stream"),
+            "bytes": base64.b64decode(data.get("data", ""))
+        }
+    except Exception:
+        return None
 
 # -----------------------------------------------------------------------------
 # GENERACIÓN DE REPORTE PDF
@@ -414,7 +443,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-tabs = st.tabs(["📥 Cargar Caja Diaria", "📊 Recuento Mensual", "💸 Gastos Mensuales", "📈 Métricas", "⚙️ Histórico"])
+tabs = st.tabs(["📥 Cargar Caja Diaria", "📊 Recuento Mensual", "💸 Gastos Mensuales", "📈 Métricas", "⚙️ Edición / Histórico"])
 
 with tabs[0]:
     st.subheader("📥 Cargar reporte diario enviado desde el local")
@@ -563,9 +592,10 @@ with tabs[1]:
                   </tr></thead><tbody>"""
                 for idx, r in df_g_mes.reset_index().iterrows():
                     bg = "#ffffff" if idx % 2 == 0 else "#fff1f2"
+                    has_comp = " 📎" if (r['comprobante'] and str(r['comprobante']).startswith("{")) else ""
                     html_gastos += f"""<tr style="background-color:{bg}; color:#0f172a;">
                       <td style="padding:8px; border:1px solid #fecdd3; font-weight:500;">{r['fecha']}</td>
-                      <td style="padding:8px; border:1px solid #fecdd3;">{r['concepto']}</td>
+                      <td style="padding:8px; border:1px solid #fecdd3;">{r['concepto']}{has_comp}</td>
                       <td style="padding:8px; border:1px solid #fecdd3; text-align:right; font-weight:bold; color:#be123c;">${r['monto']:,.0f}</td>
                     </tr>"""
                 html_gastos += f"""<tr style="background-color:#ffe4e6; color:#be123c; font-weight:bold;">
@@ -582,16 +612,125 @@ with tabs[2]:
         with col_g1: fecha_gasto = st.date_input("Fecha:", value=date.today())
         with col_g2: categoria_gasto = st.selectbox("Categoría:", ["Arriendo", "Servicios (Agua/Luz/Gas)", "Internet/Teléfono", "Mercancía/Proveedores", "Pago Deuda/Terceros", "Otro"])
         with col_g3: monto_gasto = st.number_input("Monto en Pesos ($):", min_value=0.0, step=1000.0)
-        concepto_gasto = st.text_input("Concepto:")
+        
+        col_g4, col_g5 = st.columns([2, 2])
+        with col_g4: concepto_gasto = st.text_input("Concepto / Proveedor:")
+        with col_g5: uploaded_comprobante = st.file_uploader("📎 Adjuntar Comprobante (Opcional - Imagen o PDF):", type=["pdf", "png", "jpg", "jpeg", "webp"])
+        
         submitted = st.form_submit_button("➕ Registrar Gasto Mensual", type="primary")
         if submitted and monto_gasto > 0 and concepto_gasto.strip():
+            comprobante_json = encode_file_to_json(uploaded_comprobante)
             with engine.begin() as conn:
                 conn.execute(text("""
                     INSERT INTO gastos_mensuales (fecha, concepto, monto, categoria, comprobante)
                     VALUES (:fecha, :concepto, :monto, :categoria, :comprobante);
-                """), {"fecha": fecha_gasto.strftime("%Y-%m-%d"), "concepto": concepto_gasto.upper().strip(), "monto": -abs(monto_gasto), "categoria": categoria_gasto, "comprobante": ""})
-            st.success(f"✅ Gasto '{concepto_gasto}' registrado.")
+                """), {
+                    "fecha": fecha_gasto.strftime("%Y-%m-%d"),
+                    "concepto": concepto_gasto.upper().strip(),
+                    "monto": -abs(monto_gasto),
+                    "categoria": categoria_gasto,
+                    "comprobante": comprobante_json
+                })
+            st.success(f"✅ Gasto '{concepto_gasto}' registrado exitosamente.")
             st.rerun()
+
+    st.divider()
+    st.subheader("🖼️ Visor y Descarga de Comprobantes Adjuntos")
+    with engine.connect() as conn:
+        df_gastos_all = pd.read_sql_query(text("SELECT id, fecha, concepto, monto, categoria, comprobante FROM gastos_mensuales ORDER BY fecha DESC"), conn)
+    
+    if df_gastos_all.empty:
+        st.info("Aún no hay gastos registrados.")
+    else:
+        df_con_comprobante = df_gastos_all[df_gastos_all['comprobante'].astype(str).str.startswith("{")].copy()
+        
+        if df_con_comprobante.empty:
+            st.info("Aún no hay comprobantes o facturas adjuntadas a los gastos.")
+        else:
+            options_dict = {f"[{r['fecha']}] {r['concepto']} (${abs(r['monto']):,.0f})": r['id'] for _, r in df_con_comprobante.iterrows()}
+            selected_label = st.selectbox("Selecciona un gasto para ver o descargar su comprobante:", list(options_dict.keys()))
+            
+            selected_id = options_dict[selected_label]
+            selected_row = df_con_comprobante[df_con_comprobante['id'] == selected_id].iloc[0]
+            
+            file_info = decode_comprobante_json(selected_row['comprobante'])
+            if file_info:
+                col_v1, col_v2 = st.columns([1, 2])
+                with col_v1:
+                    st.write(f"**Archivo:** `{file_info['name']}`")
+                    st.write(f"**Categoría:** {selected_row['categoria']}")
+                    st.download_button(
+                        label=f"⬇️ Descargar {file_info['name']}",
+                        data=file_info['bytes'],
+                        file_name=file_info['name'],
+                        mime=file_info['type'],
+                        type="primary"
+                    )
+                with col_v2:
+                    if file_info['type'].startswith("image/"):
+                        st.image(file_info['bytes'], caption=f"Vista previa: {file_info['name']}", use_column_width=True)
+                    elif file_info['type'] == "application/pdf":
+                        st.info("📄 Archivo PDF adjunto. Haz clic a la izquierda para descargarlo y abrirlo.")
+
+    st.divider()
+    st.subheader("✏️ Edición Rápida y Actualización de Gastos")
+    st.write("Modifica datos de los gastos o adjunta/reemplaza un comprobante si olvidaste subirlo.")
+    
+    df_gastos_display = df_gastos_all.copy()
+    df_gastos_display['tiene_comprobante'] = df_gastos_display['comprobante'].astype(str).str.startswith("{").map({True: "📎 Sí", False: "❌ No"})
+    
+    df_gastos_edited = st.data_editor(
+        df_gastos_display[['id', 'fecha', 'concepto', 'monto', 'categoria', 'tiene_comprobante']],
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "id": st.column_config.NumberColumn("ID", disabled=True),
+            "fecha": st.column_config.TextColumn("Fecha (AAAA-MM-DD)", required=True),
+            "concepto": st.column_config.TextColumn("Concepto / Proveedor", required=True),
+            "monto": st.column_config.NumberColumn("Monto ($)", format="$%d", required=True),
+            "categoria": st.column_config.SelectboxColumn("Categoría", options=["Arriendo", "Servicios (Agua/Luz/Gas)", "Internet/Teléfono", "Mercancía/Proveedores", "Pago Deuda/Terceros", "Otro"]),
+            "tiene_comprobante": st.column_config.TextColumn("Comprobante", disabled=True)
+        },
+        key="gastos_editor_table"
+    )
+    
+    col_e1, col_e2 = st.columns([2, 2])
+    with col_e1:
+        if st.button("💾 Guardar Cambios de Texto / Montos", type="primary"):
+            with engine.begin() as conn:
+                for _, r in df_gastos_edited.iterrows():
+                    g_id = r['id']
+                    if pd.notna(g_id):
+                        m_val = float(r['monto'])
+                        if m_val > 0: m_val = -m_val
+                        conn.execute(text("""
+                            UPDATE gastos_mensuales 
+                            SET fecha = :fecha, concepto = :concepto, monto = :monto, categoria = :categoria
+                            WHERE id = :id;
+                        """), {
+                            "fecha": str(r['fecha']),
+                            "concepto": str(r['concepto']).upper().strip(),
+                            "monto": m_val,
+                            "categoria": str(r['categoria']),
+                            "id": int(g_id)
+                        })
+            st.success("✅ ¡Gastos modificados correctamente!")
+            st.rerun()
+
+    with col_e2:
+        with st.expander("📎 Adjuntar o Reemplazar Comprobante en un Gasto Existente"):
+            options_edit = {f"[{r['fecha']}] {r['concepto']} (${abs(r['monto']):,.0f})": r['id'] for _, r in df_gastos_all.iterrows()}
+            if options_edit:
+                selected_edit_label = st.selectbox("Selecciona el gasto al cual agregarle el comprobante:", list(options_edit.keys()))
+                edit_id = options_edit[selected_edit_label]
+                new_file = st.file_uploader("Selecciona el archivo comprobante:", type=["pdf", "png", "jpg", "jpeg", "webp"], key="edit_uploader")
+                if st.button("💾 Adjuntar Comprobante al Gasto"):
+                    if new_file:
+                        new_json = encode_file_to_json(new_file)
+                        with engine.begin() as conn:
+                            conn.execute(text("UPDATE gastos_mensuales SET comprobante = :comp WHERE id = :id;"), {"comp": new_json, "id": edit_id})
+                        st.success("✅ Comprobante adjuntado con éxito.")
+                        st.rerun()
 
 with tabs[3]:
     st.subheader("📈 Análisis de Facturación por Días y Curva Mensual")
@@ -619,22 +758,46 @@ with tabs[3]:
         st.plotly_chart(fig_curve, use_container_width=True)
 
 with tabs[4]:
-    st.subheader("⚙️ Histórico Completo de Cierres Diarios")
+    st.subheader("⚙️ Edición Rápida de Cierres Diarios e Ingresos")
+    st.write("Modifica directamente cualquier cierre diario o saldo si hubo un error en fecha, efectivo, Nequi, Daviplata o Banco.")
+    
     with engine.connect() as conn:
-        df_all = pd.read_sql_query(text("SELECT * FROM cierres_diarios ORDER BY fecha DESC"), conn)
+        df_all = pd.read_sql_query(text("SELECT fecha, efectivo, nequi, daviplata, banco, total, observaciones FROM cierres_diarios ORDER BY fecha DESC"), conn)
     
     if not df_all.empty:
-        df_edit_hist = st.data_editor(df_all, num_rows="dynamic", use_container_width=True, key="historico_editor")
-        if st.button("💾 Guardar Cambios en Histórico"):
+        df_edit_hist = st.data_editor(
+            df_all,
+            num_rows="dynamic",
+            use_container_width=True,
+            column_config={
+                "fecha": st.column_config.TextColumn("Fecha (AAAA-MM-DD)", required=True),
+                "efectivo": st.column_config.NumberColumn("Efectivo ($)", format="$%d"),
+                "nequi": st.column_config.NumberColumn("Nequi ($)", format="$%d"),
+                "daviplata": st.column_config.NumberColumn("Daviplata ($)", format="$%d"),
+                "banco": st.column_config.NumberColumn("Banco ($)", format="$%d"),
+                "total": st.column_config.NumberColumn("Total ($)", format="$%d"),
+                "observaciones": st.column_config.TextColumn("Observaciones")
+            },
+            key="historico_editor"
+        )
+        
+        if st.button("💾 Guardar Cambios en Cierres Diarios / Ingresos", type="primary"):
             with engine.begin() as conn:
                 conn.execute(text("DELETE FROM cierres_diarios;"))
                 for _, r in df_edit_hist.iterrows():
+                    eff = float(r['efectivo']) if r['efectivo'] is not None else 0.0
+                    neq = float(r['nequi']) if r['nequi'] is not None else 0.0
+                    dav = float(r['daviplata']) if r['daviplata'] is not None else 0.0
+                    ban = float(r['banco']) if r['banco'] is not None else 0.0
+                    tot = eff + neq + dav + ban
+                    
                     if db_type == "postgres":
                         conn.execute(text("""
                             INSERT INTO cierres_diarios (fecha, efectivo, nequi, daviplata, banco, total, observaciones)
                             VALUES (:fecha, :efectivo, :nequi, :daviplata, :banco, :total, :obs);
-                        """), {"fecha": str(r['fecha']), "efectivo": float(r['efectivo']), "nequi": float(r['nequi']), "daviplata": float(r['daviplata']), "banco": float(r['banco']), "total": float(r['total']), "obs": str(r['observaciones']) if r['observaciones'] else ''})
+                        """), {"fecha": str(r['fecha']), "efectivo": eff, "nequi": neq, "daviplata": dav, "banco": ban, "total": tot, "obs": str(r['observaciones']) if r['observaciones'] else ''})
                     else:
                         conn.execute(text("INSERT INTO cierres_diarios VALUES (:fecha, :efectivo, :nequi, :daviplata, :banco, :total, :obs);"),
                                      {"fecha": str(r['fecha']), "efectivo": float(r['efectivo']), "nequi": float(r['nequi']), "daviplata": float(r['daviplata']), "banco": float(r['banco']), "total": float(r['total']), "obs": str(r['observaciones']) if r['observaciones'] else ''})
-            st.success("✅ Cambios guardados en la base de datos.")
+            st.success("✅ ¡Cierres de caja e ingresos actualizados correctamente!")
+            st.rerun()
