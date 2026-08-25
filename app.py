@@ -6,9 +6,16 @@ import re
 from datetime import datetime, date
 import plotly.express as px
 import plotly.graph_objects as go
+import io
+
+# Generación de PDF
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
 # -----------------------------------------------------------------------------
-# CONFIGURACIÓN DE LA PÁGINA Y TEMA CLARO
+# CONFIGURACIÓN DE PÁGINA Y FORZADO DE TEMA CLARO ABSOLUTO
 # -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="Control de Caja - Papelería",
@@ -16,98 +23,138 @@ st.set_page_config(
     layout="wide"
 )
 
-# Estilos CSS personalizados para forzar un diseño claro (Fondo Blanco y Acentos Verde/Azul)
+# Estilos CSS inyectados para forzar el tema claro en todos los componentes
 st.markdown("""
 <style>
-    /* Fondo principal blanco */
-    .stApp {
-        background-color: #ffffff;
-        color: #1e293b;
+    /* Fondo blanco absoluto */
+    html, body, [data-testid="stAppViewContainer"], .main, .stApp {
+        background-color: #ffffff !important;
+        color: #0f172a !important;
     }
-    
-    /* Banners y contenedores destacados */
+
+    /* Visibilidad de Pestañas (Tabs) superiores */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background-color: #f1f5f9 !important;
+        padding: 8px;
+        border-radius: 12px;
+        border: 1px solid #cbd5e1;
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        height: 42px;
+        border-radius: 8px;
+        color: #334155 !important;
+        font-weight: 600 !important;
+        background-color: transparent !important;
+    }
+
+    .stTabs [data-baseweb="tab"]:hover {
+        color: #0284c7 !important;
+        background-color: #e0f2fe !important;
+    }
+
+    .stTabs [aria-selected="true"] {
+        background-color: #0284c7 !important;
+        color: #ffffff !important;
+    }
+
+    .stTabs [data-baseweb="tab"] div p {
+        color: inherit !important;
+        font-size: 15px !important;
+        font-weight: 600 !important;
+    }
+
+    /* Selectbox y campos de entrada en fondo claro */
+    div[data-baseweb="select"] > div,
+    div[data-baseweb="input"] > div,
+    .stSelectbox div[data-baseweb="select"] {
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+        border: 1px solid #cbd5e1 !important;
+        border-radius: 8px !important;
+    }
+
+    div[data-baseweb="popover"], div[role="listbox"], ul[role="listbox"] {
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+    }
+
+    li[role="option"] {
+        color: #0f172a !important;
+        background-color: #ffffff !important;
+    }
+
+    li[role="option"]:hover {
+        background-color: #e0f2fe !important;
+        color: #0369a1 !important;
+    }
+
+    /* Banner Superior */
     .header-banner {
         background: linear-gradient(135deg, #e0f2fe 0%, #dcfce7 100%);
-        padding: 24px;
+        padding: 22px;
         border-radius: 14px;
         border: 1px solid #bae6fd;
         margin-bottom: 20px;
     }
     
     .header-banner h1 {
-        color: #0369a1;
+        color: #0369a1 !important;
         margin: 0;
-        font-size: 28px;
+        font-size: 26px;
         font-weight: 700;
     }
     
     .header-banner p {
-        color: #047857;
-        margin: 5px 0 0 0;
-        font-size: 15px;
+        color: #047857 !important;
+        margin: 4px 0 0 0;
+        font-size: 14px;
     }
 
-    /* Targetas de métricas claras */
-    .metric-box-green {
+    /* Cajas de Métricas Claras */
+    .metric-card-green {
         background-color: #f0fdf4;
         border: 1px solid #bbf7d0;
         border-radius: 10px;
-        padding: 16px;
+        padding: 14px;
         text-align: center;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.02);
     }
-    .metric-box-blue {
+    .metric-card-blue {
         background-color: #f0f9ff;
         border: 1px solid #bae6fd;
         border-radius: 10px;
-        padding: 16px;
+        padding: 14px;
         text-align: center;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.02);
     }
-    .metric-title {
-        font-size: 14px;
-        color: #64748b;
+    .metric-card-title {
+        font-size: 13px;
+        color: #475569 !important;
         font-weight: 600;
-        margin-bottom: 6px;
+        margin-bottom: 4px;
     }
-    .metric-value {
-        font-size: 22px;
+    .metric-card-val {
+        font-size: 20px;
         font-weight: 700;
-        color: #0f172a;
+        color: #0f172a !important;
     }
 
-    /* Botones verde claro / azul claro */
+    /* Botones Verde/Azul */
     div.stButton > button {
         background-color: #10b981 !important;
         color: #ffffff !important;
         border-radius: 8px !important;
         border: none !important;
         font-weight: 600 !important;
-        padding: 10px 20px !important;
-        transition: all 0.2s ease !important;
+        padding: 8px 18px !important;
     }
     div.stButton > button:hover {
         background-color: #059669 !important;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1) !important;
     }
 
-    /* Ajuste de solapas (Tabs) */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-        background-color: #f8fafc;
-        padding: 8px;
-        border-radius: 12px;
-        border: 1px solid #e2e8f0;
-    }
-    .stTabs [data-baseweb="tab"] {
-        height: 45px;
-        border-radius: 8px;
-        color: #475569;
-        font-weight: 600;
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: #e0f2fe !important;
-        color: #0369a1 !important;
+    /* Textos generales */
+    h1, h2, h3, h4, h5, h6, p, label, span {
+        color: #0f172a !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -156,7 +203,111 @@ def init_db():
 init_db()
 
 # -----------------------------------------------------------------------------
-# PARSER DE ARCHIVOS EXCEL DIARIOS
+# GENERACIÓN DE REPORTE PDF
+# -----------------------------------------------------------------------------
+def generate_pdf_report(mes_nombre, df_cierres_mes, df_gastos_mes, tot_efectivo, tot_nequi, tot_davi, tot_caja, tot_gastos, liquidez_neta):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
+    story = []
+    
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('DocTitle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=18, textColor=colors.HexColor('#0369a1'), spaceAfter=4)
+    subtitle_style = ParagraphStyle('DocSubtitle', parent=styles['Normal'], fontName='Helvetica', fontSize=10, textColor=colors.HexColor('#047857'), spaceAfter=14)
+    h2_style = ParagraphStyle('SectionHeading', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=12, textColor=colors.HexColor('#0f172a'), spaceBefore=10, spaceAfter=6)
+    cell_style = ParagraphStyle('Cell', parent=styles['Normal'], fontName='Helvetica', fontSize=9, textColor=colors.HexColor('#1e293b'))
+    cell_bold = ParagraphStyle('CellB', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, textColor=colors.HexColor('#0f172a'))
+    header_cell = ParagraphStyle('HCell', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, textColor=colors.white)
+
+    story.append(Paragraph(f"Recuento de Caja Mensual — {mes_nombre}", title_style))
+    story.append(Paragraph("Papelería — Reporte Consolidado de Administración Remota", subtitle_style))
+    story.append(Spacer(1, 4))
+
+    # Resumen
+    summary_data = [
+        [Paragraph("Efectivo", header_cell), Paragraph("Nequi", header_cell), Paragraph("Daviplata/Banco", header_cell), Paragraph("Total Caja", header_cell), Paragraph("Liquidez Neto", header_cell)],
+        [Paragraph(f"${tot_efectivo:,.0f}", cell_bold), Paragraph(f"${tot_nequi:,.0f}", cell_bold), Paragraph(f"${tot_davi:,.0f}", cell_bold), Paragraph(f"${tot_caja:,.0f}", cell_bold), Paragraph(f"${liquidez_neta:,.0f}", cell_bold)]
+    ]
+    t_summary = Table(summary_data, colWidths=[100, 100, 110, 110, 120])
+    t_summary.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#10b981')),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+        ('TOPPADDING', (0,0), (-1,-1), 6),
+        ('BACKGROUND', (0,1), (-1,1), colors.HexColor('#f0fdf4')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#bbf7d0')),
+    ]))
+    story.append(t_summary)
+    story.append(Spacer(1, 10))
+
+    # Recuento Diario
+    story.append(Paragraph("Tabla Recuento Diario de Caja", h2_style))
+    daily_rows = [[Paragraph("Fecha", header_cell), Paragraph("Efectivo", header_cell), Paragraph("Nequi", header_cell), Paragraph("Daviplata / Banco", header_cell), Paragraph("Total Día", header_cell)]]
+    for idx, r in df_cierres_mes.iterrows():
+        daily_rows.append([
+            Paragraph(str(r['fecha']), cell_style),
+            Paragraph(f"${r['efectivo']:,.0f}", cell_style),
+            Paragraph(f"${r['nequi']:,.0f}", cell_style),
+            Paragraph(f"${r['daviplata']:,.0f}", cell_style),
+            Paragraph(f"${r['total']:,.0f}", cell_bold)
+        ])
+    daily_rows.append([
+        Paragraph("TOTAL", header_cell),
+        Paragraph(f"${tot_efectivo:,.0f}", header_cell),
+        Paragraph(f"${tot_nequi:,.0f}", header_cell),
+        Paragraph(f"${tot_davi:,.0f}", header_cell),
+        Paragraph(f"${tot_caja:,.0f}", header_cell)
+    ])
+
+    t_daily = Table(daily_rows, colWidths=[110, 110, 110, 110, 100])
+    t_daily.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#0284c7')),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+        ('TOPPADDING', (0,0), (-1,-1), 5),
+        ('ROWBACKGROUNDS', (0,1), (-1,-2), [colors.white, colors.HexColor('#f8fafc')]),
+        ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#0369a1')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')),
+    ]))
+    story.append(t_daily)
+
+    # Gastos
+    if not df_gastos_mes.empty:
+        story.append(Spacer(1, 10))
+        story.append(Paragraph("Gastos Mensuales y Compras (No Diarios)", h2_style))
+        gastos_rows = [[Paragraph("Fecha", header_cell), Paragraph("Concepto", header_cell), Paragraph("Monto ($)", header_cell)]]
+        for idx, r in df_gastos_mes.iterrows():
+            gastos_rows.append([
+                Paragraph(str(r['fecha']), cell_style),
+                Paragraph(str(r['concepto']), cell_style),
+                Paragraph(f"${r['monto']:,.0f}", cell_bold)
+            ])
+        gastos_rows.append([
+            Paragraph("TOTAL GASTOS", header_cell),
+            Paragraph("", header_cell),
+            Paragraph(f"${tot_gastos:,.0f}", header_cell)
+        ])
+        t_gastos = Table(gastos_rows, colWidths=[120, 270, 150])
+        t_gastos.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#e11d48')),
+            ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+            ('ALIGN', (2,0), (2,-1), 'RIGHT'),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+            ('TOPPADDING', (0,0), (-1,-1), 5),
+            ('ROWBACKGROUNDS', (0,1), (-1,-2), [colors.white, colors.HexColor('#fff1f2')]),
+            ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#be123c')),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#fecdd3')),
+        ]))
+        story.append(t_gastos)
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+# -----------------------------------------------------------------------------
+# PARSER DE EXCEL
 # -----------------------------------------------------------------------------
 def clean_date(val, filename_date=None):
     if isinstance(val, (datetime, date)):
@@ -199,7 +350,7 @@ def parse_daily_excel(uploaded_file):
             break
             
     if header_idx is None:
-        return None, "No se encontró la cabecera estándar (FECHA, CONCEPTO) en el Excel."
+        return None, "No se encontró el formato estándar de transacciones en este Excel."
         
     header = [str(x).strip().upper() if x is not None else '' for x in data[header_idx]]
     col_fecha = header.index('FECHA') if 'FECHA' in header else 1
@@ -279,7 +430,7 @@ def parse_daily_excel(uploaded_file):
     return summary, pd.DataFrame(transactions)
 
 # -----------------------------------------------------------------------------
-# ENCABEZADO PRINCIPAL
+# INTERFAZ PRINCIPAL
 # -----------------------------------------------------------------------------
 st.markdown("""
 <div class="header-banner">
@@ -321,14 +472,14 @@ with tabs[0]:
             
             st.markdown("##### Saldos Extraídos del Día:")
             c1, c2, c3, c4, c5 = st.columns(5)
-            c1.markdown(f'<div class="metric-box-green"><div class="metric-title">💵 Efectivo</div><div class="metric-value">${summary["efectivo"]:,.0f}</div></div>', unsafe_allow_html=True)
-            c2.markdown(f'<div class="metric-box-blue"><div class="metric-title">🟣 Nequi</div><div class="metric-value">${summary["nequi"]:,.0f}</div></div>', unsafe_allow_html=True)
-            c3.markdown(f'<div class="metric-box-green"><div class="metric-title">🔴 Daviplata</div><div class="metric-value">${summary["daviplata"]:,.0f}</div></div>', unsafe_allow_html=True)
-            c4.markdown(f'<div class="metric-box-blue"><div class="metric-title">🏦 Banco</div><div class="metric-value">${summary["banco"]:,.0f}</div></div>', unsafe_allow_html=True)
-            c5.markdown(f'<div class="metric-box-green"><div class="metric-title">💰 Total Día</div><div class="metric-value">${summary["total"]:,.0f}</div></div>', unsafe_allow_html=True)
+            c1.markdown(f'<div class="metric-card-green"><div class="metric-card-title">💵 Efectivo</div><div class="metric-card-val">${summary["efectivo"]:,.0f}</div></div>', unsafe_allow_html=True)
+            c2.markdown(f'<div class="metric-card-blue"><div class="metric-card-title">🟣 Nequi</div><div class="metric-card-val">${summary["nequi"]:,.0f}</div></div>', unsafe_allow_html=True)
+            c3.markdown(f'<div class="metric-card-green"><div class="metric-card-title">🔴 Daviplata</div><div class="metric-card-val">${summary["daviplata"]:,.0f}</div></div>', unsafe_allow_html=True)
+            c4.markdown(f'<div class="metric-card-blue"><div class="metric-card-title">🏦 Banco</div><div class="metric-card-val">${summary["banco"]:,.0f}</div></div>', unsafe_allow_html=True)
+            c5.markdown(f'<div class="metric-card-green"><div class="metric-card-title">💰 Total Día</div><div class="metric-card-val">${summary["total"]:,.0f}</div></div>', unsafe_allow_html=True)
             
             st.write("")
-            st.markdown("##### Detalle de Transacciones (Edición manual habilitada por si deseas ajustar valores):")
+            st.markdown("##### Detalle de Transacciones (Edición manual habilitada):")
             df_edited = st.data_editor(
                 df_trans,
                 num_rows="dynamic",
@@ -372,7 +523,7 @@ with tabs[0]:
                 st.success(f"🎉 ¡Cierre del día {fecha_str} guardado exitosamente!")
 
 # -----------------------------------------------------------------------------
-# PESTAÑA 2: RECUENTO MENSUAL (CON FORMATO EXACTO AL EXCEL ORIGINAL)
+# PESTAÑA 2: RECUENTO MENSUAL (TABLAS EN HTML BLANCO PURO)
 # -----------------------------------------------------------------------------
 with tabs[1]:
     st.subheader("📊 Recuento de Caja Mensual")
@@ -383,15 +534,15 @@ with tabs[1]:
     conn.close()
     
     if df_cierres.empty:
-        st.info("Aún no hay registros de cierres diarios. Carga un archivo en la primera pestaña.")
+        st.info("Aún no hay cierres cargados. Sube un archivo en la primera pestaña.")
     else:
         df_cierres['mes_año'] = pd.to_datetime(df_cierres['fecha']).dt.strftime('%Y-%m')
         meses_disponibles = df_cierres['mes_año'].unique()
         
-        col_m, _ = st.columns([1, 2])
-        with col_m:
+        col_m1, col_m2 = st.columns([1, 1])
+        with col_m1:
             mes_sel = st.selectbox("Selecciona el Mes:", meses_disponibles, index=len(meses_disponibles)-1)
-        
+            
         df_c_mes = df_cierres[df_cierres['mes_año'] == mes_sel].copy()
         
         tot_efectivo = df_c_mes['efectivo'].sum()
@@ -409,15 +560,30 @@ with tabs[1]:
             tot_gastos_grandes = 0.0
             
         liquidez_neta = tot_caja - abs(tot_gastos_grandes)
+
+        # Generar archivo PDF para descarga
+        pdf_bytes = generate_pdf_report(
+            mes_sel, df_c_mes, df_g_mes, 
+            tot_efectivo, tot_nequi, tot_davi, tot_caja, tot_gastos_grandes, liquidez_neta
+        )
         
-        # Tarjetas de Totales como en el Excel Original
+        with col_m2:
+            st.write("")
+            st.download_button(
+                label="📄 Descargar Recuento Mensual en PDF",
+                data=pdf_bytes,
+                file_name=f"Recuento_Caja_{mes_sel}.pdf",
+                mime="application/pdf",
+                type="primary"
+            )
+        
         st.markdown("##### Totales Consolidados del Mes:")
         k1, k2, k3, k4, k5 = st.columns(5)
-        k1.markdown(f'<div class="metric-box-green"><div class="metric-title">💵 Total Efectivo</div><div class="metric-value">${tot_efectivo:,.0f}</div></div>', unsafe_allow_html=True)
-        k2.markdown(f'<div class="metric-box-blue"><div class="metric-title">🟣 Total Nequi</div><div class="metric-value">${tot_nequi:,.0f}</div></div>', unsafe_allow_html=True)
-        k3.markdown(f'<div class="metric-box-green"><div class="metric-title">🔴 Total Daviplata</div><div class="metric-value">${tot_davi:,.0f}</div></div>', unsafe_allow_html=True)
-        k4.markdown(f'<div class="metric-box-blue"><div class="metric-title">📦 Total Caja Recuento</div><div class="metric-value">${tot_caja:,.0f}</div></div>', unsafe_allow_html=True)
-        k5.markdown(f'<div class="metric-box-green"><div class="metric-title">📊 Liquidez Neto</div><div class="metric-value">${liquidez_neta:,.0f}</div></div>', unsafe_allow_html=True)
+        k1.markdown(f'<div class="metric-card-green"><div class="metric-card-title">💵 Total Efectivo</div><div class="metric-card-val">${tot_efectivo:,.0f}</div></div>', unsafe_allow_html=True)
+        k2.markdown(f'<div class="metric-card-blue"><div class="metric-card-title">🟣 Total Nequi</div><div class="metric-card-val">${tot_nequi:,.0f}</div></div>', unsafe_allow_html=True)
+        k3.markdown(f'<div class="metric-card-green"><div class="metric-card-title">🔴 Total Daviplata</div><div class="metric-card-val">${tot_davi:,.0f}</div></div>', unsafe_allow_html=True)
+        k4.markdown(f'<div class="metric-card-blue"><div class="metric-card-title">📦 Total Caja Recuento</div><div class="metric-card-val">${tot_caja:,.0f}</div></div>', unsafe_allow_html=True)
+        k5.markdown(f'<div class="metric-card-green"><div class="metric-card-title">📊 Liquidez Neto</div><div class="metric-card-val">${liquidez_neta:,.0f}</div></div>', unsafe_allow_html=True)
         
         st.write("")
         col_t1, col_t2 = st.columns([3, 2])
@@ -425,56 +591,92 @@ with tabs[1]:
         with col_t1:
             st.markdown("##### Tabla Recuento Diario (Estructura Excel):")
             
-            # Fila de totales tipo Excel
-            df_display = df_c_mes[['fecha', 'efectivo', 'nequi', 'daviplata', 'total']].copy()
-            
-            # Añadir fila de 'Total' al final
-            df_tot_row = pd.DataFrame([{
-                'fecha': 'TOTAL',
-                'efectivo': tot_efectivo,
-                'nequi': tot_nequi,
-                'daviplata': tot_davi,
-                'total': tot_caja
-            }])
-            df_table_final = pd.concat([df_display, df_tot_row], ignore_index=True)
-            
-            st.dataframe(
-                df_table_final,
-                column_config={
-                    "fecha": "Fecha",
-                    "efectivo": st.column_config.NumberColumn("Efectivo", format="$%d"),
-                    "nequi": st.column_config.NumberColumn("Nequi", format="$%d"),
-                    "daviplata": st.column_config.NumberColumn("Daviplata / Banco", format="$%d"),
-                    "total": st.column_config.NumberColumn("Total", format="$%d"),
-                },
-                use_container_width=True,
-                hide_index=True
-            )
+            # Construcción de la Tabla HTML con Fondo Blanco Garantizado
+            html_daily = """
+            <div style="overflow-x:auto; margin-top:8px;">
+            <table style="width:100%; border-collapse:collapse; background-color:#ffffff; color:#0f172a; border:1px solid #cbd5e1; font-family:sans-serif; border-radius:8px;">
+              <thead>
+                <tr style="background-color:#0284c7; color:#ffffff; font-weight:bold; text-align:center;">
+                  <th style="padding:10px; border:1px solid #cbd5e1;">Fecha</th>
+                  <th style="padding:10px; border:1px solid #cbd5e1;">Efectivo</th>
+                  <th style="padding:10px; border:1px solid #cbd5e1;">Nequi</th>
+                  <th style="padding:10px; border:1px solid #cbd5e1;">Daviplata / Banco</th>
+                  <th style="padding:10px; border:1px solid #cbd5e1;">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+            """
+            for idx, r in df_c_mes.reset_index().iterrows():
+                bg = "#ffffff" if idx % 2 == 0 else "#f8fafc"
+                html_daily += f"""
+                <tr style="background-color:{bg}; text-align:center; color:#0f172a;">
+                  <td style="padding:8px; border:1px solid #e2e8f0; font-weight:500;">{r['fecha']}</td>
+                  <td style="padding:8px; border:1px solid #e2e8f0;">${r['efectivo']:,.0f}</td>
+                  <td style="padding:8px; border:1px solid #e2e8f0;">${r['nequi']:,.0f}</td>
+                  <td style="padding:8px; border:1px solid #e2e8f0;">${r['daviplata']:,.0f}</td>
+                  <td style="padding:8px; border:1px solid #e2e8f0; font-weight:bold; color:#0369a1;">${r['total']:,.0f}</td>
+                </tr>
+                """
+            html_daily += f"""
+                <tr style="background-color:#e0f2fe; color:#0369a1; font-weight:bold; text-align:center;">
+                  <td style="padding:10px; border:1px solid #bae6fd;">TOTAL</td>
+                  <td style="padding:10px; border:1px solid #bae6fd;">${tot_efectivo:,.0f}</td>
+                  <td style="padding:10px; border:1px solid #bae6fd;">${tot_nequi:,.0f}</td>
+                  <td style="padding:10px; border:1px solid #bae6fd;">${tot_davi:,.0f}</td>
+                  <td style="padding:10px; border:1px solid #bae6fd; font-size:16px;">${tot_caja:,.0f}</td>
+                </tr>
+              </tbody>
+            </table>
+            </div>
+            """
+            st.markdown(html_daily, unsafe_allow_html=True)
             
         with col_t2:
-            st.markdown("##### Gastos Mensuales y Mercancía (No diarios):")
+            st.markdown("##### Gastos Mensuales y Mercancía:")
             if df_g_mes.empty:
                 st.info("No hay gastos mayores ingresados en este mes.")
             else:
-                st.dataframe(
-                    df_g_mes[['fecha', 'concepto', 'monto']],
-                    column_config={
-                        "fecha": "Fecha",
-                        "concepto": "Concepto",
-                        "monto": st.column_config.NumberColumn("Monto ($)", format="$%d"),
-                    },
-                    use_container_width=True,
-                    hide_index=True
-                )
+                html_gastos = """
+                <div style="overflow-x:auto; margin-top:8px;">
+                <table style="width:100%; border-collapse:collapse; background-color:#ffffff; color:#0f172a; border:1px solid #cbd5e1; font-family:sans-serif; border-radius:8px;">
+                  <thead>
+                    <tr style="background-color:#e11d48; color:#ffffff; font-weight:bold; text-align:left;">
+                      <th style="padding:10px; border:1px solid #cbd5e1;">Fecha</th>
+                      <th style="padding:10px; border:1px solid #cbd5e1;">Concepto</th>
+                      <th style="padding:10px; border:1px solid #cbd5e1; text-align:right;">Monto ($)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                """
+                for idx, r in df_g_mes.reset_index().iterrows():
+                    bg = "#ffffff" if idx % 2 == 0 else "#fff1f2"
+                    html_gastos += f"""
+                    <tr style="background-color:{bg}; color:#0f172a;">
+                      <td style="padding:8px; border:1px solid #fecdd3; font-weight:500;">{r['fecha']}</td>
+                      <td style="padding:8px; border:1px solid #fecdd3;">{r['concepto']}</td>
+                      <td style="padding:8px; border:1px solid #fecdd3; text-align:right; font-weight:bold; color:#be123c;">${r['monto']:,.0f}</td>
+                    </tr>
+                    """
+                html_gastos += f"""
+                    <tr style="background-color:#ffe4e6; color:#be123c; font-weight:bold;">
+                      <td style="padding:10px; border:1px solid #fecdd3;">TOTAL GASTOS</td>
+                      <td style="padding:10px; border:1px solid #fecdd3;"></td>
+                      <td style="padding:10px; border:1px solid #fecdd3; text-align:right; font-size:15px;">${tot_gastos_grandes:,.0f}</td>
+                    </tr>
+                  </tbody>
+                </table>
+                </div>
+                """
+                st.markdown(html_gastos, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# PESTAÑA 3: GASTOS MENSUALES / COMPRAS
+# PESTAÑA 3: GASTOS MENSUALES
 # -----------------------------------------------------------------------------
 with tabs[2]:
-    st.subheader("💸 Registrar Gasto Mensual, Factura o Compra Grande")
-    st.write("Agrega aquí arriendo, servicios, proveedores o pagos a terceros para mantener limpia la caja diaria.")
+    st.subheader("💸 Registrar Gasto Mensual o Compra Grande")
+    st.write("Agrega aquí arriendo, servicios, proveedores o pagos mayores.")
     
-    with st.form("form_gastos_claros", clear_on_submit=True):
+    with st.form("form_gastos_clean", clear_on_submit=True):
         col_g1, col_g2, col_g3 = st.columns(3)
         with col_g1:
             fecha_gasto = st.date_input("Fecha:", value=date.today())
@@ -510,7 +712,7 @@ with tabs[2]:
                 st.rerun()
 
 # -----------------------------------------------------------------------------
-# PESTAÑA 4: MÉTRICAS DE FACTURACIÓN Y DETALLES
+# PESTAÑA 4: MÉTRICAS DE FACTURACIÓN
 # -----------------------------------------------------------------------------
 with tabs[3]:
     st.subheader("📈 Análisis de Facturación por Días y Curva Mensual")
@@ -526,15 +728,14 @@ with tabs[3]:
         df_cierres['mes_año'] = pd.to_datetime(df_cierres['fecha']).dt.strftime('%Y-%m')
         meses_disponibles = df_cierres['mes_año'].unique()
         
-        col_m1, col_m2 = st.columns(2)
+        col_m1, _ = st.columns([1, 1])
         with col_m1:
             mes_sel_graf = st.selectbox("Selecciona Mes para ver Facturación Diaria:", meses_disponibles, index=len(meses_disponibles)-1)
             
         df_c_graf = df_cierres[df_cierres['mes_año'] == mes_sel_graf].copy()
         
-        # 1. Gráfico de Barras por Días
-        st.markdown("#### 1. Facturación Día a Día (Días de Mayor y Menor Venta)")
-        
+        # Gráfico 1: Barras por días
+        st.markdown("#### 1. Facturación Día a Día")
         fig_bar = px.bar(
             df_c_graf,
             x="fecha",
@@ -547,36 +748,34 @@ with tabs[3]:
         fig_bar.update_layout(
             plot_bgcolor='white',
             paper_bgcolor='white',
-            font=dict(color='#1e293b'),
+            font=dict(color='#0f172a'),
             xaxis=dict(showgrid=False),
             yaxis=dict(showgrid=True, gridcolor='#f1f5f9')
         )
         st.plotly_chart(fig_bar, use_container_width=True)
         
-        # Días destacados
         max_day = df_c_graf.loc[df_c_graf['total'].idxmax()]
         min_day = df_c_graf.loc[df_c_graf['total'].idxmin()]
         
         c_max, c_min = st.columns(2)
-        c_max.success(f"🏆 **Día con MAYOR facturación:** {max_day['fecha']} con **${max_day['total']:,.0f}**")
-        c_min.warning(f"📉 **Día con MENOR facturación:** {min_day['fecha']} con **${min_day['total']:,.0f}**")
+        c_max.success(f"🏆 **Mayor facturación:** {max_day['fecha']} con **${max_day['total']:,.0f}**")
+        c_min.warning(f"📉 **Menor facturación:** {min_day['fecha']} con **${min_day['total']:,.0f}**")
         
         st.divider()
         
-        # 2. Inspector / Detalle de "Por qué" facturó más o menos un día específico
-        st.markdown("#### 2. Inspeccionar Detalle de un Día (¿Por qué se facturó más o menos?)")
-        
+        # Gráfico 2: Detalle por día
+        st.markdown("#### 2. Inspeccionar Detalle de un Día")
         dias_del_mes = df_c_graf['fecha'].tolist()
-        dia_inspeccionar = st.selectbox("Selecciona un día específico para ver sus movimientos:", dias_del_mes, index=len(dias_del_mes)-1)
+        dia_inspeccionar = st.selectbox("Selecciona un día específico:", dias_del_mes, index=len(dias_del_mes)-1)
         
         df_t_dia = df_trans[df_trans['fecha'] == dia_inspeccionar]
         
         if df_t_dia.empty:
-            st.write("No hay detalle de ítems registrado para este día en la base de datos.")
+            st.write("No hay detalle de ítems registrado para este día.")
         else:
             col_d1, col_d2 = st.columns([2, 1])
             with col_d1:
-                st.markdown(f"**Movimientos registrados el {dia_inspeccionar}:**")
+                st.markdown(f"**Movimientos del {dia_inspeccionar}:**")
                 st.dataframe(
                     df_t_dia[['concepto', 'cantidad', 'codigo', 'ingreso', 'gastos']],
                     column_config={
@@ -600,9 +799,8 @@ with tabs[3]:
                 
         st.divider()
         
-        # 3. Curva Evolutiva por Meses
-        st.markdown("#### 3. Curva Evolutiva por Meses (Tendencia de Crecimiento)")
-        
+        # Gráfico 3: Curva por Meses
+        st.markdown("#### 3. Curva Evolutiva por Meses")
         df_mensual_sum = df_cierres.groupby('mes_año')['total'].sum().reset_index()
         
         fig_curve = px.line(
@@ -617,14 +815,14 @@ with tabs[3]:
         fig_curve.update_layout(
             plot_bgcolor='white',
             paper_bgcolor='white',
-            font=dict(color='#1e293b'),
+            font=dict(color='#0f172a'),
             xaxis=dict(showgrid=True, gridcolor='#f1f5f9'),
             yaxis=dict(showgrid=True, gridcolor='#f1f5f9')
         )
         st.plotly_chart(fig_curve, use_container_width=True)
 
 # -----------------------------------------------------------------------------
-# PESTAÑA 5: HISTÓRICO Y EDICIÓN MANUAL
+# PESTAÑA 5: HISTÓRICO
 # -----------------------------------------------------------------------------
 with tabs[4]:
     st.subheader("⚙️ Histórico Completo de Cierres Diarios")
@@ -634,7 +832,7 @@ with tabs[4]:
     conn.close()
     
     if not df_all.empty:
-        st.write("Edita directamente cualquier valor histórico si necesitas hacer alguna corrección manual.")
+        st.write("Edita directamente cualquier valor histórico si necesitas corregir datos.")
         df_edit_hist = st.data_editor(
             df_all,
             num_rows="dynamic",
@@ -653,4 +851,4 @@ with tabs[4]:
                 """, (r['fecha'], r['efectivo'], r['nequi'], r['daviplata'], r['banco'], r['total'], r['observaciones']))
             conn.commit()
             conn.close()
-            st.success("✅ Cambios guardados correctamente en la base de datos.")
+            st.success("✅ Cambios guardados en la base de datos.")
