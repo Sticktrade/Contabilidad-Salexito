@@ -30,42 +30,85 @@ st.markdown("""
         color: #0f172a !important;
     }
 
-    /* 2. Pestañas (Tabs) visibles */
-    button[data-baseweb="tab"] {
-        background-color: #f1f5f9 !important;
+    /* 2. Pestañas (Tabs) - Visibilidad total de títulos */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px !important;
+        background-color: #f8fafc !important;
+        padding: 8px !important;
+        border-radius: 12px !important;
+        border: 1px solid #e2e8f0 !important;
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        background-color: #ffffff !important;
         border: 1px solid #cbd5e1 !important;
         border-radius: 8px !important;
-        margin-right: 6px !important;
-        padding: 8px 16px !important;
+        padding: 8px 18px !important;
     }
-    button[data-baseweb="tab"] * {
+
+    /* Forzar color de texto e iconos en pestañas inactivas */
+    .stTabs [data-baseweb="tab"] *, 
+    .stTabs [data-baseweb="tab"] p, 
+    .stTabs [data-baseweb="tab"] span {
         color: #334155 !important;
         font-weight: 600 !important;
+        font-size: 14px !important;
     }
-    button[data-baseweb="tab"]:hover {
+
+    .stTabs [data-baseweb="tab"]:hover {
         background-color: #e0f2fe !important;
+        border-color: #0284c7 !important;
     }
-    button[data-baseweb="tab"]:hover * {
+
+    .stTabs [data-baseweb="tab"]:hover * {
         color: #0284c7 !important;
     }
-    button[data-baseweb="tab"][aria-selected="true"] {
+
+    /* Pestaña seleccionada activa */
+    .stTabs [aria-selected="true"] {
         background-color: #0284c7 !important;
         border-color: #0284c7 !important;
     }
-    button[data-baseweb="tab"][aria-selected="true"] * {
+
+    .stTabs [aria-selected="true"] *, 
+    .stTabs [aria-selected="true"] p, 
+    .stTabs [aria-selected="true"] span {
         color: #ffffff !important;
     }
 
-    /* 3. Etiquetas superiores (Labels: Fecha, Categoría, Monto, Concepto) */
+    /* 3. Date Input y Popup de Calendario */
+    div[data-testid="stDateInput"] > div,
+    div[data-testid="stDateInput"] input {
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+        border: 1px solid #cbd5e1 !important;
+        border-radius: 8px !important;
+    }
+
+    div[data-baseweb="popover"],
+    div[data-baseweb="calendar"],
+    div[data-baseweb="calendar"] *,
+    div[role="dialog"],
+    div[role="dialog"] * {
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+    }
+
+    div[data-baseweb="calendar"] button:hover {
+        background-color: #e0f2fe !important;
+        color: #0284c7 !important;
+    }
+
+    /* 4. Labels / Títulos de widgets (Fecha:, Categoría:, Monto en Pesos:) */
     label, [data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] p, label p {
         color: #0f172a !important;
         font-weight: 600 !important;
         font-size: 14px !important;
     }
 
-    /* 4. Cajas de Entrada (Inputs, Selectbox, Fecha, Números, Textos) */
-    div[data-baseweb="input"],
+    /* 5. Cajas de Entrada (Selectbox, Text, Number Inputs) */
     div[data-baseweb="select"] > div,
+    div[data-baseweb="input"],
     div[data-baseweb="base-input"],
     input,
     textarea {
@@ -75,51 +118,41 @@ st.markdown("""
         border-radius: 8px !important;
     }
 
-    /* Texto interno en controles de entrada */
-    div[data-baseweb="select"] div, 
-    div[data-baseweb="select"] span,
-    input {
+    div[data-baseweb="select"] span, div[data-baseweb="select"] div {
         color: #0f172a !important;
     }
 
-    /* Opciones desplegables del Selectbox */
-    div[data-baseweb="popover"] *, ul[role="listbox"] * {
-        background-color: #ffffff !important;
-        color: #0f172a !important;
-    }
-    li[role="option"]:hover {
-        background-color: #e0f2fe !important;
-        color: #0284c7 !important;
-    }
-
-    /* Botones de incremento/decremento en NumberInput (+ / -) */
     div[data-testid="stNumberInput"] button {
         background-color: #f1f5f9 !important;
         border: 1px solid #cbd5e1 !important;
     }
+
     div[data-testid="stNumberInput"] button * {
         color: #0f172a !important;
     }
 
-    /* 5. Carga de Archivos (Uploader) */
+    /* 6. Caja de subida de archivos (Uploader) */
     [data-testid="stFileUploaderDropzone"] {
         background-color: #f8fafc !important;
         border: 2px dashed #0284c7 !important;
         border-radius: 12px !important;
     }
+
     [data-testid="stFileUploaderDropzone"] * {
         color: #334155 !important;
     }
+
     [data-testid="stFileUploaderDropzone"] button {
         background-color: #0284c7 !important;
         border: none !important;
         border-radius: 6px !important;
     }
+
     [data-testid="stFileUploaderDropzone"] button * {
         color: #ffffff !important;
     }
 
-    /* 6. Botones Principales y Formularios */
+    /* 7. Botones de Acción y Formularios */
     button[kind="primary"], 
     div.stButton > button, 
     button[data-testid="stFormSubmitButton"] > button,
@@ -130,18 +163,20 @@ st.markdown("""
         border-radius: 8px !important;
         font-weight: 600 !important;
     }
+
     button[kind="primary"]:hover, 
     div.stButton > button:hover, 
     [data-testid="stFormSubmitButton"] button:hover {
         background-color: #059669 !important;
     }
+
     button[kind="primary"] *, 
     div.stButton > button *, 
     [data-testid="stFormSubmitButton"] button * {
         color: #ffffff !important;
     }
 
-    /* Banners y Tarjetas de Métricas */
+    /* Banner y Tarjetas de Métricas */
     .header-banner {
         background: linear-gradient(135deg, #e0f2fe 0%, #dcfce7 100%);
         padding: 20px;
