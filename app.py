@@ -14,7 +14,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
 # -----------------------------------------------------------------------------
-# CONFIGURACIÓN DE PÁGINA Y ESTILOS CSS REFORZADOS
+# CONFIGURACIÓN DE PÁGINA Y FORZADO GLOBAL DE TEMA CLARO
 # -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="Control de Caja - Papelería",
@@ -24,18 +24,62 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    /* 1. Fondo claro general */
+    /* 1. Forzar esquema claro global en navegador y portales de Streamlit */
+    :root, body, html {
+        color-scheme: light !important;
+    }
+    
     html, body, [data-testid="stAppViewContainer"], .main, .stApp {
         background-color: #ffffff !important;
         color: #0f172a !important;
     }
 
-    /* 2. Pestañas (Tabs) - Visibilidad total de títulos */
+    /* 2. Reparar Calendario Emergente y Menús Desplegables (Portales de BaseWeb) */
+    div[data-baseweb="popover"],
+    div[data-baseweb="calendar"],
+    div[data-baseweb="menu"],
+    div[role="dialog"] {
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+        border: 1px solid #cbd5e1 !important;
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1) !important;
+    }
+
+    div[data-baseweb="calendar"] * {
+        color: #0f172a !important;
+        background-color: transparent !important;
+    }
+
+    div[data-baseweb="calendar"] button {
+        color: #0f172a !important;
+        background-color: #ffffff !important;
+    }
+
+    div[data-baseweb="calendar"] button:hover {
+        background-color: #e0f2fe !important;
+        color: #0284c7 !important;
+    }
+
+    div[data-baseweb="calendar"] [aria-selected="true"] {
+        background-color: #0284c7 !important;
+        color: #ffffff !important;
+    }
+
+    /* 3. Campo de Entrada de Fecha (Date Input) */
+    div[data-testid="stDateInput"] input,
+    div[data-testid="stDateInput"] > div {
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+        border: 1px solid #cbd5e1 !important;
+        border-radius: 8px !important;
+    }
+
+    /* 4. Pestañas (Tabs) con Títulos Visibles */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 8px !important;
-        background-color: #f8fafc !important;
-        padding: 8px !important;
-        border-radius: 12px !important;
+        background-color: #f1f5f9 !important;
+        border-radius: 10px !important;
+        padding: 6px !important;
+        gap: 6px !important;
         border: 1px solid #e2e8f0 !important;
     }
 
@@ -43,15 +87,12 @@ st.markdown("""
         background-color: #ffffff !important;
         border: 1px solid #cbd5e1 !important;
         border-radius: 8px !important;
-        padding: 8px 18px !important;
+        padding: 8px 16px !important;
     }
 
-    /* Forzar color de texto e iconos en pestañas inactivas */
-    .stTabs [data-baseweb="tab"] *, 
-    .stTabs [data-baseweb="tab"] p, 
-    .stTabs [data-baseweb="tab"] span {
+    .stTabs [data-baseweb="tab"] [data-testid="stMarkdownContainer"] p {
         color: #334155 !important;
-        font-weight: 600 !important;
+        font-weight: 700 !important;
         font-size: 14px !important;
     }
 
@@ -60,58 +101,29 @@ st.markdown("""
         border-color: #0284c7 !important;
     }
 
-    .stTabs [data-baseweb="tab"]:hover * {
+    .stTabs [data-baseweb="tab"]:hover [data-testid="stMarkdownContainer"] p {
         color: #0284c7 !important;
     }
 
-    /* Pestaña seleccionada activa */
-    .stTabs [aria-selected="true"] {
+    .stTabs [data-baseweb="tab"][aria-selected="true"] {
         background-color: #0284c7 !important;
         border-color: #0284c7 !important;
     }
 
-    .stTabs [aria-selected="true"] *, 
-    .stTabs [aria-selected="true"] p, 
-    .stTabs [aria-selected="true"] span {
+    .stTabs [data-baseweb="tab"][aria-selected="true"] [data-testid="stMarkdownContainer"] p {
         color: #ffffff !important;
     }
 
-    /* 3. Date Input y Popup de Calendario */
-    div[data-testid="stDateInput"] > div,
-    div[data-testid="stDateInput"] input {
-        background-color: #ffffff !important;
-        color: #0f172a !important;
-        border: 1px solid #cbd5e1 !important;
-        border-radius: 8px !important;
-    }
-
-    div[data-baseweb="popover"],
-    div[data-baseweb="calendar"],
-    div[data-baseweb="calendar"] *,
-    div[role="dialog"],
-    div[role="dialog"] * {
-        background-color: #ffffff !important;
-        color: #0f172a !important;
-    }
-
-    div[data-baseweb="calendar"] button:hover {
-        background-color: #e0f2fe !important;
-        color: #0284c7 !important;
-    }
-
-    /* 4. Labels / Títulos de widgets (Fecha:, Categoría:, Monto en Pesos:) */
+    /* 5. Labels y Cajas de Texto / Selección */
     label, [data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] p, label p {
         color: #0f172a !important;
         font-weight: 600 !important;
         font-size: 14px !important;
     }
 
-    /* 5. Cajas de Entrada (Selectbox, Text, Number Inputs) */
     div[data-baseweb="select"] > div,
     div[data-baseweb="input"],
-    div[data-baseweb="base-input"],
-    input,
-    textarea {
+    input, textarea {
         background-color: #ffffff !important;
         color: #0f172a !important;
         border: 1px solid #cbd5e1 !important;
@@ -131,7 +143,7 @@ st.markdown("""
         color: #0f172a !important;
     }
 
-    /* 6. Caja de subida de archivos (Uploader) */
+    /* 6. Uploader y Botones */
     [data-testid="stFileUploaderDropzone"] {
         background-color: #f8fafc !important;
         border: 2px dashed #0284c7 !important;
@@ -142,17 +154,6 @@ st.markdown("""
         color: #334155 !important;
     }
 
-    [data-testid="stFileUploaderDropzone"] button {
-        background-color: #0284c7 !important;
-        border: none !important;
-        border-radius: 6px !important;
-    }
-
-    [data-testid="stFileUploaderDropzone"] button * {
-        color: #ffffff !important;
-    }
-
-    /* 7. Botones de Acción y Formularios */
     button[kind="primary"], 
     div.stButton > button, 
     button[data-testid="stFormSubmitButton"] > button,
@@ -164,19 +165,13 @@ st.markdown("""
         font-weight: 600 !important;
     }
 
-    button[kind="primary"]:hover, 
-    div.stButton > button:hover, 
-    [data-testid="stFormSubmitButton"] button:hover {
-        background-color: #059669 !important;
-    }
-
     button[kind="primary"] *, 
     div.stButton > button *, 
     [data-testid="stFormSubmitButton"] button * {
         color: #ffffff !important;
     }
 
-    /* Banner y Tarjetas de Métricas */
+    /* Banners y Métricas */
     .header-banner {
         background: linear-gradient(135deg, #e0f2fe 0%, #dcfce7 100%);
         padding: 20px;
