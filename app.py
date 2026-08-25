@@ -191,7 +191,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# CONEXIÓN SEGURA A BASE DE DATOS
+# CONEXIÓN SEGURA A BASE DE DATOS Y CACHÉ ALTO RENDIMIENTO
 # -----------------------------------------------------------------------------
 @st.cache_resource
 def get_db_engine():
@@ -214,6 +214,7 @@ engine, db_type, conn_error = get_db_engine()
 if conn_error and "SUPABASE_URL" in st.secrets:
     st.error(f"⚠️ Error al conectar a Supabase:\n\n{conn_error}")
 
+@st.cache_resource
 def init_db():
     try:
         with engine.begin() as conn:
@@ -261,6 +262,36 @@ def init_db():
 init_db()
 
 # -----------------------------------------------------------------------------
+# CONSULTAS OPTIMIZADAS CON CACHÉ (Evita descargas pesadas innecesarias)
+# -----------------------------------------------------------------------------
+@st.cache_data(ttl=60)
+def load_cierres_diarios():
+    with engine.connect() as conn:
+        return pd.read_sql_query(text("SELECT * FROM cierres_diarios ORDER BY fecha ASC"), conn)
+
+@st.cache_data(ttl=60)
+def load_transacciones_diarias():
+    with engine.connect() as conn:
+        return pd.read_sql_query(text("SELECT * FROM transacciones_diarias"), conn)
+
+@st.cache_data(ttl=60)
+def load_gastos_ligeros():
+    """Carga los gastos SIN traer el texto pesadísimo del archivo comprobante en base64"""
+    with engine.connect() as conn:
+        query = """
+            SELECT id, fecha, concepto, monto, categoria, 
+                   CASE WHEN comprobante IS NOT NULL AND length(comprobante) > 5 THEN 1 ELSE 0 END as tiene_comprobante
+            FROM gastos_mensuales ORDER BY fecha DESC
+        """
+        return pd.read_sql_query(text(query), conn)
+
+def load_single_comprobante(gasto_id):
+    """Obtiene el comprobante solo cuando el usuario selecciona ver o descargar ese gasto específico"""
+    with engine.connect() as conn:
+        res = conn.execute(text("SELECT comprobante FROM gastos_mensuales WHERE id = :id"), {"id": gasto_id}).fetchone()
+        return res[0] if res else None
+
+# -----------------------------------------------------------------------------
 # FUNCIONES AUXILIARES PARA COMPROBANTES Y MANEJO DE ARCHIVOS
 # -----------------------------------------------------------------------------
 def encode_file_to_json(uploaded_file):
@@ -290,6 +321,7 @@ def decode_comprobante_json(comp_str):
 # -----------------------------------------------------------------------------
 # GENERACIÓN DE REPORTE PDF
 # -----------------------------------------------------------------------------
+@st.cache_data(ttl=300)
 def generate_pdf_report(mes_nombre, df_cierres_mes, df_gastos_mes, tot_efectivo, tot_nequi, tot_davi, tot_caja, tot_gastos, liquidez_neta):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
@@ -506,13 +538,13 @@ with tabs[0]:
                             conn.execute(text("INSERT INTO transacciones_diarias (fecha, concepto, cantidad, codigo, ingreso, gastos, saldo) VALUES (:fecha, :concepto, :cantidad, :codigo, :ingreso, :gastos, :saldo)"),
                                          {"fecha": fecha_str, "concepto": row['concepto'], "cantidad": row['cantidad'], "codigo": row['codigo'], "ingreso": row['ingreso'], "gastos": row['gastos'], "saldo": row['saldo']})
                 
+                st.cache_data.clear()
                 st.success(f"🎉 ¡Cierre del día {fecha_str} guardado exitosamente!")
 
 with tabs[1]:
     st.subheader("📊 Recuento de Caja Mensual")
-    with engine.connect() as conn:
-        df_cierres = pd.read_sql_query(text("SELECT * FROM cierres_diarios ORDER BY fecha ASC"), conn)
-        df_gastos = pd.read_sql_query(text("SELECT * FROM gastos_mensuales ORDER BY fecha ASC"), conn)
+    df_cierres = load_cierres_diarios()
+    df_gastos = load_gastos_ligeros()
     
     if df_cierres.empty:
         st.info("Aún no hay cierres cargados en la base de datos.")
@@ -592,7 +624,7 @@ with tabs[1]:
                   </tr></thead><tbody>"""
                 for idx, r in df_g_mes.reset_index().iterrows():
                     bg = "#ffffff" if idx % 2 == 0 else "#fff1f2"
-                    has_comp = " 📎" if (r['comprobante'] and str(r['comprobante']).startswith("{")) else ""
+                    has_comp = " 📎" if r['tiene_comprobante'] == 1 else ""
                     html_gastos += f"""<tr style="background-color:{bg}; color:#0f172a;">
                       <td style="padding:8px; border:1px solid #fecdd3; font-weight:500;">{r['fecha']}</td>
                       <td style="padding:8px; border:1px solid #fecdd3;">{r['concepto']}{has_comp}</td>
@@ -631,18 +663,18 @@ with tabs[2]:
                     "categoria": categoria_gasto,
                     "comprobante": comprobante_json
                 })
+            st.cache_data.clear()
             st.success(f"✅ Gasto '{concepto_gasto}' registrado exitosamente.")
             st.rerun()
 
     st.divider()
     st.subheader("🖼️ Visor y Descarga de Comprobantes Adjuntos")
-    with engine.connect() as conn:
-        df_gastos_all = pd.read_sql_query(text("SELECT id, fecha, concepto, monto, categoria, comprobante FROM gastos_mensuales ORDER BY fecha DESC"), conn)
+    df_gastos_all = load_gastos_ligeros()
     
     if df_gastos_all.empty:
         st.info("Aún no hay gastos registrados.")
     else:
-        df_con_comprobante = df_gastos_all[df_gastos_all['comprobante'].astype(str).str.startswith("{")].copy()
+        df_con_comprobante = df_gastos_all[df_gastos_all['tiene_comprobante'] == 1].copy()
         
         if df_con_comprobante.empty:
             st.info("Aún no hay comprobantes o facturas adjuntadas a los gastos.")
@@ -653,7 +685,10 @@ with tabs[2]:
             selected_id = options_dict[selected_label]
             selected_row = df_con_comprobante[df_con_comprobante['id'] == selected_id].iloc[0]
             
-            file_info = decode_comprobante_json(selected_row['comprobante'])
+            # Carga del archivo solo bajo demanda
+            raw_comp_str = load_single_comprobante(selected_id)
+            file_info = decode_comprobante_json(raw_comp_str)
+            
             if file_info:
                 col_v1, col_v2 = st.columns([1, 2])
                 with col_v1:
@@ -677,7 +712,7 @@ with tabs[2]:
     st.write("Modifica datos de los gastos o adjunta/reemplaza un comprobante si olvidaste subirlo.")
     
     df_gastos_display = df_gastos_all.copy()
-    df_gastos_display['tiene_comprobante'] = df_gastos_display['comprobante'].astype(str).str.startswith("{").map({True: "📎 Sí", False: "❌ No"})
+    df_gastos_display['tiene_comprobante'] = df_gastos_display['tiene_comprobante'].map({1: "📎 Sí", 0: "❌ No"})
     
     df_gastos_edited = st.data_editor(
         df_gastos_display[['id', 'fecha', 'concepto', 'monto', 'categoria', 'tiene_comprobante']],
@@ -714,6 +749,7 @@ with tabs[2]:
                             "categoria": str(r['categoria']),
                             "id": int(g_id)
                         })
+            st.cache_data.clear()
             st.success("✅ ¡Gastos modificados correctamente!")
             st.rerun()
 
@@ -729,14 +765,14 @@ with tabs[2]:
                         new_json = encode_file_to_json(new_file)
                         with engine.begin() as conn:
                             conn.execute(text("UPDATE gastos_mensuales SET comprobante = :comp WHERE id = :id;"), {"comp": new_json, "id": edit_id})
+                        st.cache_data.clear()
                         st.success("✅ Comprobante adjuntado con éxito.")
                         st.rerun()
 
 with tabs[3]:
     st.subheader("📈 Análisis de Facturación por Días y Curva Mensual")
-    with engine.connect() as conn:
-        df_cierres = pd.read_sql_query(text("SELECT * FROM cierres_diarios ORDER BY fecha ASC"), conn)
-        df_trans = pd.read_sql_query(text("SELECT * FROM transacciones_diarias"), conn)
+    df_cierres = load_cierres_diarios()
+    df_trans = load_transacciones_diarias()
     
     if not df_cierres.empty:
         df_cierres['mes_año'] = pd.to_datetime(df_cierres['fecha']).dt.strftime('%Y-%m')
@@ -761,12 +797,11 @@ with tabs[4]:
     st.subheader("⚙️ Edición Rápida de Cierres Diarios e Ingresos")
     st.write("Modifica directamente cualquier cierre diario o saldo si hubo un error en fecha, efectivo, Nequi, Daviplata o Banco.")
     
-    with engine.connect() as conn:
-        df_all = pd.read_sql_query(text("SELECT fecha, efectivo, nequi, daviplata, banco, total, observaciones FROM cierres_diarios ORDER BY fecha DESC"), conn)
+    df_all = load_cierres_diarios()
     
     if not df_all.empty:
         df_edit_hist = st.data_editor(
-            df_all,
+            df_all[['fecha', 'efectivo', 'nequi', 'daviplata', 'banco', 'total', 'observaciones']],
             num_rows="dynamic",
             use_container_width=True,
             column_config={
@@ -799,5 +834,6 @@ with tabs[4]:
                     else:
                         conn.execute(text("INSERT INTO cierres_diarios VALUES (:fecha, :efectivo, :nequi, :daviplata, :banco, :total, :obs);"),
                                      {"fecha": str(r['fecha']), "efectivo": float(r['efectivo']), "nequi": float(r['nequi']), "daviplata": float(r['daviplata']), "banco": float(r['banco']), "total": float(r['total']), "obs": str(r['observaciones']) if r['observaciones'] else ''})
+            st.cache_data.clear()
             st.success("✅ ¡Cierres de caja e ingresos actualizados correctamente!")
             st.rerun()
