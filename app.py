@@ -90,79 +90,83 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# CONEXIÓN A BASE DE DATOS (SUPABASE POSTGRESQL CON FALLBACK SQLITE)
+# CONEXIÓN SEGURA A BASE DE DATOS
 # -----------------------------------------------------------------------------
+@st.cache_resource
 def get_db_engine():
-    if "SUPABASE_URL" in st.secrets and st.secrets["SUPABASE_URL"]:
-        db_url = st.secrets["SUPABASE_URL"]
+    if "SUPABASE_URL" in st.secrets and st.secrets["SUPABASE_URL"].strip():
+        db_url = st.secrets["SUPABASE_URL"].strip()
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
-        return create_engine(db_url, pool_pre_ping=True), "postgres"
+        try:
+            eng = create_engine(db_url, pool_pre_ping=True, pool_size=5, max_overflow=10)
+            # Probar conexión
+            with eng.connect() as conn:
+                conn.execute(text("SELECT 1;"))
+            return eng, "postgres", None
+        except Exception as e:
+            return create_engine("sqlite:///papeleria.db"), "sqlite", str(e)
     else:
-        return create_engine("sqlite:///papeleria.db"), "sqlite"
+        return create_engine("sqlite:///papeleria.db"), "sqlite", "Sin configurar SUPABASE_URL en Secrets."
 
-engine, db_type = get_db_engine()
+engine, db_type, conn_error = get_db_engine()
+
+if conn_error and "SUPABASE_URL" in st.secrets:
+    st.error(f"⚠️ **Error al conectar a Supabase:** No se pudo establecer conexión con la URL ingresada.\n\n"
+             f"**Detalle técnico:** `{conn_error}`\n\n"
+             f"**Sugerencias para resolverlo:**\n"
+             f"1. Verifica que reemplazaste `[YOUR-PASSWORD]` con la clave del proyecto.\n"
+             f"2. Si la clave tiene `@`, cámbialo por `%40`.\n"
+             f"3. Usa la URL del Pooler (`.pooler.supabase.com:6543`) y añade `?sslmode=require` al final.")
 
 def init_db():
-    with engine.begin() as conn:
-        if db_type == "postgres":
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS cierres_diarios (
-                    fecha VARCHAR(20) PRIMARY KEY,
-                    efectivo FLOAT,
-                    nequi FLOAT,
-                    daviplata FLOAT,
-                    banco FLOAT,
-                    total FLOAT,
-                    observaciones TEXT
-                );
-            """))
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS transacciones_diarias (
-                    id SERIAL PRIMARY KEY,
-                    fecha VARCHAR(20),
-                    concepto TEXT,
-                    cantidad INT,
-                    codigo INT,
-                    ingreso FLOAT,
-                    gastos FLOAT,
-                    saldo FLOAT
-                );
-            """))
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS gastos_mensuales (
-                    id SERIAL PRIMARY KEY,
-                    fecha VARCHAR(20),
-                    concepto TEXT,
-                    monto FLOAT,
-                    categoria VARCHAR(100),
-                    comprobante TEXT
-                );
-            """))
-        else:
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS cierres_diarios (
-                    fecha TEXT PRIMARY KEY,
-                    efectivo REAL, nequi REAL, daviplata REAL, banco REAL, total REAL, observaciones TEXT
-                );
-            """))
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS transacciones_diarias (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    fecha TEXT, concepto TEXT, cantidad INTEGER, codigo INTEGER, ingreso REAL, gastos REAL, saldo REAL
-                );
-            """))
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS gastos_mensuales (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    fecha TEXT, concepto TEXT, monto REAL, categoria TEXT, comprobante TEXT
-                );
-            """))
+    try:
+        with engine.begin() as conn:
+            if db_type == "postgres":
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS cierres_diarios (
+                        fecha VARCHAR(20) PRIMARY KEY,
+                        efectivo FLOAT, nequi FLOAT, daviplata FLOAT, banco FLOAT, total FLOAT, observaciones TEXT
+                    );
+                """))
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS transacciones_diarias (
+                        id SERIAL PRIMARY KEY,
+                        fecha VARCHAR(20), concepto TEXT, cantidad INT, codigo INT, ingreso FLOAT, gastos FLOAT, saldo FLOAT
+                    );
+                """))
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS gastos_mensuales (
+                        id SERIAL PRIMARY KEY,
+                        fecha VARCHAR(20), concepto TEXT, monto FLOAT, categoria VARCHAR(100), comprobante TEXT
+                    );
+                """))
+            else:
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS cierres_diarios (
+                        fecha TEXT PRIMARY KEY,
+                        efectivo REAL, nequi REAL, daviplata REAL, banco REAL, total REAL, observaciones TEXT
+                    );
+                """))
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS transacciones_diarias (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        fecha TEXT, concepto TEXT, cantidad INTEGER, codigo INTEGER, ingreso REAL, gastos REAL, saldo REAL
+                    );
+                """))
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS gastos_mensuales (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        fecha TEXT, concepto TEXT, monto REAL, categoria TEXT, comprobante TEXT
+                    );
+                """))
+    except Exception as ex:
+        st.warning(f"Error inicializando tablas de base de datos: {ex}")
 
 init_db()
 
 # -----------------------------------------------------------------------------
-# GENERACIÓN DE PDF REPORTE
+# GENERACIÓN DE REPORTE PDF
 # -----------------------------------------------------------------------------
 def generate_pdf_report(mes_nombre, df_cierres_mes, df_gastos_mes, tot_efectivo, tot_nequi, tot_davi, tot_caja, tot_gastos, liquidez_neta):
     buffer = io.BytesIO()
@@ -310,10 +314,10 @@ def parse_daily_excel(uploaded_file):
 # -----------------------------------------------------------------------------
 # ESTRUCTURA DE LA APLICACIÓN
 # -----------------------------------------------------------------------------
-st.markdown("""
+st.markdown(f"""
 <div class="header-banner">
     <h1>📚 Sistema de Control de Caja y Contabilidad</h1>
-    <p>Gestión remota de papelería — Base de datos permanente Supabase</p>
+    <p>Gestión remota de papelería — Motor: <b>{db_type.upper()}</b></p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -380,7 +384,7 @@ with tabs[0]:
                             conn.execute(text("INSERT INTO transacciones_diarias (fecha, concepto, cantidad, codigo, ingreso, gastos, saldo) VALUES (:fecha, :concepto, :cantidad, :codigo, :ingreso, :gastos, :saldo)"),
                                          {"fecha": fecha_str, "concepto": row['concepto'], "cantidad": row['cantidad'], "codigo": row['codigo'], "ingreso": row['ingreso'], "gastos": row['gastos'], "saldo": row['saldo']})
                 
-                st.success(f"🎉 ¡Cierre del día {fecha_str} guardado exitosamente en Supabase!")
+                st.success(f"🎉 ¡Cierre del día {fecha_str} guardado exitosamente!")
 
 with tabs[1]:
     st.subheader("📊 Recuento de Caja Mensual")
