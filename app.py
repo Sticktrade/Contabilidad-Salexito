@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
 import openpyxl
 import re
 from datetime import datetime, date
@@ -8,14 +7,14 @@ import plotly.express as px
 import io
 from sqlalchemy import create_engine, text
 
-# PDF Generation
+# Generación de PDF
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
 # -----------------------------------------------------------------------------
-# CONFIGURACIÓN DE PÁGINA Y TEMA CLARO
+# CONFIGURACIÓN DE PÁGINA Y ESTILOS CSS REFORZADOS
 # -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="Control de Caja - Papelería",
@@ -25,43 +24,124 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    /* Fondo claro absoluto */
+    /* 1. Fondo claro general */
     html, body, [data-testid="stAppViewContainer"], .main, .stApp {
         background-color: #ffffff !important;
         color: #0f172a !important;
     }
 
-    /* Uploader */
-    [data-testid="stFileUploader"], [data-testid="stFileUploaderDropzone"] {
+    /* 2. Pestañas (Tabs) visibles */
+    button[data-baseweb="tab"] {
+        background-color: #f1f5f9 !important;
+        border: 1px solid #cbd5e1 !important;
+        border-radius: 8px !important;
+        margin-right: 6px !important;
+        padding: 8px 16px !important;
+    }
+    button[data-baseweb="tab"] * {
+        color: #334155 !important;
+        font-weight: 600 !important;
+    }
+    button[data-baseweb="tab"]:hover {
+        background-color: #e0f2fe !important;
+    }
+    button[data-baseweb="tab"]:hover * {
+        color: #0284c7 !important;
+    }
+    button[data-baseweb="tab"][aria-selected="true"] {
+        background-color: #0284c7 !important;
+        border-color: #0284c7 !important;
+    }
+    button[data-baseweb="tab"][aria-selected="true"] * {
+        color: #ffffff !important;
+    }
+
+    /* 3. Etiquetas superiores (Labels: Fecha, Categoría, Monto, Concepto) */
+    label, [data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] p, label p {
+        color: #0f172a !important;
+        font-weight: 600 !important;
+        font-size: 14px !important;
+    }
+
+    /* 4. Cajas de Entrada (Inputs, Selectbox, Fecha, Números, Textos) */
+    div[data-baseweb="input"],
+    div[data-baseweb="select"] > div,
+    div[data-baseweb="base-input"],
+    input,
+    textarea {
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+        border: 1px solid #cbd5e1 !important;
+        border-radius: 8px !important;
+    }
+
+    /* Texto interno en controles de entrada */
+    div[data-baseweb="select"] div, 
+    div[data-baseweb="select"] span,
+    input {
+        color: #0f172a !important;
+    }
+
+    /* Opciones desplegables del Selectbox */
+    div[data-baseweb="popover"] *, ul[role="listbox"] * {
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+    }
+    li[role="option"]:hover {
+        background-color: #e0f2fe !important;
+        color: #0284c7 !important;
+    }
+
+    /* Botones de incremento/decremento en NumberInput (+ / -) */
+    div[data-testid="stNumberInput"] button {
+        background-color: #f1f5f9 !important;
+        border: 1px solid #cbd5e1 !important;
+    }
+    div[data-testid="stNumberInput"] button * {
+        color: #0f172a !important;
+    }
+
+    /* 5. Carga de Archivos (Uploader) */
+    [data-testid="stFileUploaderDropzone"] {
         background-color: #f8fafc !important;
-        border: 2px dashed #cbd5e1 !important;
+        border: 2px dashed #0284c7 !important;
         border-radius: 12px !important;
     }
     [data-testid="stFileUploaderDropzone"] * {
         color: #334155 !important;
     }
+    [data-testid="stFileUploaderDropzone"] button {
+        background-color: #0284c7 !important;
+        border: none !important;
+        border-radius: 6px !important;
+    }
+    [data-testid="stFileUploaderDropzone"] button * {
+        color: #ffffff !important;
+    }
 
-    /* Pestañas (Tabs) */
-    button[data-baseweb="tab"] {
-        background-color: #f1f5f9 !important;
-        border: 1px solid #cbd5e1 !important;
-        color: #334155 !important;
+    /* 6. Botones Principales y Formularios */
+    button[kind="primary"], 
+    div.stButton > button, 
+    button[data-testid="stFormSubmitButton"] > button,
+    [data-testid="stFormSubmitButton"] button {
+        background-color: #10b981 !important;
+        color: #ffffff !important;
+        border: none !important;
         border-radius: 8px !important;
-        margin-right: 6px !important;
-        padding: 8px 16px !important;
         font-weight: 600 !important;
     }
-    button[data-baseweb="tab"]:hover {
-        background-color: #e0f2fe !important;
-        color: #0284c7 !important;
+    button[kind="primary"]:hover, 
+    div.stButton > button:hover, 
+    [data-testid="stFormSubmitButton"] button:hover {
+        background-color: #059669 !important;
     }
-    button[data-baseweb="tab"][aria-selected="true"] {
-        background-color: #0284c7 !important;
+    button[kind="primary"] *, 
+    div.stButton > button *, 
+    [data-testid="stFormSubmitButton"] button * {
         color: #ffffff !important;
-        border-color: #0284c7 !important;
     }
 
-    /* Banner */
+    /* Banners y Tarjetas de Métricas */
     .header-banner {
         background: linear-gradient(135deg, #e0f2fe 0%, #dcfce7 100%);
         padding: 20px;
@@ -71,21 +151,10 @@ st.markdown("""
     }
     .header-banner h1 { color: #0369a1 !important; margin: 0; font-size: 24px; font-weight: 700; }
     .header-banner p { color: #047857 !important; margin: 4px 0 0 0; font-size: 14px; }
-
-    /* Tarjetas de Métricas */
     .metric-card-green { background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; padding: 12px; text-align: center; }
     .metric-card-blue { background-color: #f0f9ff; border: 1px solid #bae6fd; border-radius: 10px; padding: 12px; text-align: center; }
     .metric-card-title { font-size: 13px; color: #475569 !important; font-weight: 600; }
     .metric-card-val { font-size: 20px; font-weight: 700; color: #0f172a !important; }
-
-    /* Botones */
-    div.stButton > button {
-        background-color: #10b981 !important;
-        color: #ffffff !important;
-        border-radius: 8px !important;
-        border: none !important;
-        font-weight: 600 !important;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -100,7 +169,6 @@ def get_db_engine():
             db_url = db_url.replace("postgres://", "postgresql://", 1)
         try:
             eng = create_engine(db_url, pool_pre_ping=True, pool_size=5, max_overflow=10)
-            # Probar conexión
             with eng.connect() as conn:
                 conn.execute(text("SELECT 1;"))
             return eng, "postgres", None
@@ -112,12 +180,7 @@ def get_db_engine():
 engine, db_type, conn_error = get_db_engine()
 
 if conn_error and "SUPABASE_URL" in st.secrets:
-    st.error(f"⚠️ **Error al conectar a Supabase:** No se pudo establecer conexión con la URL ingresada.\n\n"
-             f"**Detalle técnico:** `{conn_error}`\n\n"
-             f"**Sugerencias para resolverlo:**\n"
-             f"1. Verifica que reemplazaste `[YOUR-PASSWORD]` con la clave del proyecto.\n"
-             f"2. Si la clave tiene `@`, cámbialo por `%40`.\n"
-             f"3. Usa la URL del Pooler (`.pooler.supabase.com:6543`) y añade `?sslmode=require` al final.")
+    st.error(f"⚠️ **Error al conectar a Supabase:**\n\n`{conn_error}`")
 
 def init_db():
     try:
@@ -161,7 +224,7 @@ def init_db():
                     );
                 """))
     except Exception as ex:
-        st.warning(f"Error inicializando tablas de base de datos: {ex}")
+        st.warning(f"Error inicializando tablas: {ex}")
 
 init_db()
 
