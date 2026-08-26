@@ -9,7 +9,7 @@ import plotly.express as px
 import io
 from sqlalchemy import create_engine, text
 
-# Generación de PDF
+# Generación de PDF profesional
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -19,14 +19,13 @@ from reportlab.lib import colors
 # CONFIGURACIÓN DE PÁGINA Y FORZADO GLOBAL DE TEMA CLARO
 # -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Control de Caja - Papelería",
+    page_title="Control de Caja y Presupuesto - Papelería",
     page_icon="📚",
     layout="wide"
 )
 
 st.markdown("""
 <style>
-    /* 1. Forzar esquema claro global en navegador y portales de Streamlit */
     :root, body, html {
         color-scheme: light !important;
     }
@@ -36,7 +35,6 @@ st.markdown("""
         color: #0f172a !important;
     }
 
-    /* 2. Reparar Calendario Emergente y Menús Desplegables (Portales de BaseWeb) */
     div[data-baseweb="popover"],
     div[data-baseweb="calendar"],
     div[data-baseweb="menu"],
@@ -67,7 +65,6 @@ st.markdown("""
         color: #ffffff !important;
     }
 
-    /* 3. Campo de Entrada de Fecha (Date Input) */
     div[data-testid="stDateInput"] input,
     div[data-testid="stDateInput"] > div {
         background-color: #ffffff !important;
@@ -76,7 +73,6 @@ st.markdown("""
         border-radius: 8px !important;
     }
 
-    /* 4. Pestañas (Tabs) con Títulos Visibles */
     .stTabs [data-baseweb="tab-list"] {
         background-color: #f1f5f9 !important;
         border-radius: 10px !important;
@@ -116,7 +112,6 @@ st.markdown("""
         color: #ffffff !important;
     }
 
-    /* 5. Labels y Cajas de Texto / Selección */
     label, [data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] p, label p {
         color: #0f172a !important;
         font-weight: 600 !important;
@@ -145,7 +140,6 @@ st.markdown("""
         color: #0f172a !important;
     }
 
-    /* 6. Uploader y Botones */
     [data-testid="stFileUploaderDropzone"] {
         background-color: #f8fafc !important;
         border: 2px dashed #0284c7 !important;
@@ -173,7 +167,6 @@ st.markdown("""
         color: #ffffff !important;
     }
 
-    /* Banners y Métricas */
     .header-banner {
         background: linear-gradient(135deg, #e0f2fe 0%, #dcfce7 100%);
         padding: 20px;
@@ -185,6 +178,7 @@ st.markdown("""
     .header-banner p { color: #047857 !important; margin: 4px 0 0 0; font-size: 14px; }
     .metric-card-green { background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; padding: 12px; text-align: center; }
     .metric-card-blue { background-color: #f0f9ff; border: 1px solid #bae6fd; border-radius: 10px; padding: 12px; text-align: center; }
+    .metric-card-amber { background-color: #fffbebf1; border: 1px solid #fde68a; border-radius: 10px; padding: 12px; text-align: center; }
     .metric-card-title { font-size: 13px; color: #475569 !important; font-weight: 600; }
     .metric-card-val { font-size: 20px; font-weight: 700; color: #0f172a !important; }
 </style>
@@ -237,6 +231,12 @@ def init_db():
                         fecha VARCHAR(20), concepto TEXT, monto FLOAT, categoria VARCHAR(100), comprobante TEXT
                     );
                 """))
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS presupuestos_mensuales (
+                        id SERIAL PRIMARY KEY,
+                        mes_año VARCHAR(20), concepto TEXT, monto_inicial FLOAT, monto_final FLOAT, categoria VARCHAR(100)
+                    );
+                """))
             else:
                 conn.execute(text("""
                     CREATE TABLE IF NOT EXISTS cierres_diarios (
@@ -256,13 +256,64 @@ def init_db():
                         fecha TEXT, concepto TEXT, monto REAL, categoria TEXT, comprobante TEXT
                     );
                 """))
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS presupuestos_mensuales (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        mes_año TEXT, concepto TEXT, monto_inicial REAL, monto_final REAL, categoria TEXT
+                    );
+                """))
+
+            # Precarga inicial de datos de presupuestos históricos si la tabla está vacía
+            res_pres = conn.execute(text("SELECT COUNT(*) FROM presupuestos_mensuales;")).fetchone()
+            if res_pres and res_pres[0] == 0:
+                hist_pres = [
+                    # Febrero 2026
+                    ("2026-02", "Renta", 1100000.0, 1100000.0, "Gastos Fijos"),
+                    ("2026-02", "Servicios", 250000.0, 250000.0, "Servicios"),
+                    ("2026-02", "Internet", 75000.0, 75000.0, "Servicios"),
+                    ("2026-02", "Pago de impuestos cuota 2", 250000.0, 250000.0, "Impuestos"),
+                    ("2026-02", "Abono deuda 5,5M Ana", 160000.0, 160000.0, "Deudas"),
+                    ("2026-02", "Pago Juancho", 120000.0, 120000.0, "Personal"),
+                    ("2026-02", "Pago Ana", 80000.0, 80000.0, "Personal"),
+                    ("2026-02", "Mercancia", 1032585.0, 1032585.0, "Mercancía"),
+                    ("2026-02", "Abono deuda Israel (Señora)", 100000.0, 100000.0, "Deudas"),
+                    ("2026-02", "Fotocopiadora abono", 150000.0, 150000.0, "Inversión/Equipo"),
+                    # Marzo 2026
+                    ("2026-03", "Renta", 1100000.0, 1100000.0, "Gastos Fijos"),
+                    ("2026-03", "Servicios", 280000.0, 280000.0, "Servicios"),
+                    ("2026-03", "Internet", 75000.0, 75000.0, "Servicios"),
+                    ("2026-03", "Pago de impuestos cuota 3", 250000.0, 250000.0, "Impuestos"),
+                    ("2026-03", "Abono deuda 5,5M Ana", 160000.0, 160000.0, "Deudas"),
+                    ("2026-03", "Deuda Alexis", 100000.0, 0.0, "Deudas"),
+                    ("2026-03", "Deuda Salomon", 100000.0, 0.0, "Deudas"),
+                    ("2026-03", "Pago Juancho", 120000.0, 120000.0, "Personal"),
+                    ("2026-03", "Pago Ana", 80000.0, 80000.0, "Personal"),
+                    ("2026-03", "Mercancia", 1000000.0, 1481400.0, "Mercancía"),
+                    ("2026-03", "Abono deuda Israel (Señora)", 100000.0, 100000.0, "Deudas"),
+                    ("2026-03", "Fotocopiadora abono", 200000.0, 200000.0, "Inversión/Equipo"),
+                    ("2026-03", "Pago Servicios Israel", 0.0, 1632000.0, "Servicios"),
+                    # Junio 2026
+                    ("2026-06", "Renta", 1100000.0, 1100000.0, "Gastos Fijos"),
+                    ("2026-06", "Servicios", 280000.0, 280000.0, "Servicios"),
+                    ("2026-06", "Internet", 75000.0, 75000.0, "Servicios"),
+                    ("2026-06", "Abono deuda 5,5M Ana", 160000.0, 160000.0, "Deudas"),
+                    ("2026-06", "Pago Juancho", 150000.0, 150000.0, "Personal"),
+                    ("2026-06", "Pago Ana", 100000.0, 80000.0, "Personal"),
+                    ("2026-06", "Mercancia", 532344.0, 532344.0, "Mercancía"),
+                    ("2026-06", "Fotocopiadora abono", 200000.0, 150000.0, "Inversión/Equipo")
+                ]
+                for m, c, mi, mf, cat in hist_pres:
+                    conn.execute(text("""
+                        INSERT INTO presupuestos_mensuales (mes_año, concepto, monto_inicial, monto_final, categoria)
+                        VALUES (:m, :c, :mi, :mf, :cat);
+                    """), {"m": m, "c": c, "mi": mi, "mf": mf, "cat": cat})
     except Exception as ex:
         st.warning(f"Error inicializando tablas: {ex}")
 
 init_db()
 
 # -----------------------------------------------------------------------------
-# CONSULTAS OPTIMIZADAS CON CACHÉ (Evita descargas pesadas innecesarias)
+# CONSULTAS OPTIMIZADAS CON CACHÉ
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=60)
 def load_cierres_diarios():
@@ -276,20 +327,24 @@ def load_transacciones_diarias():
 
 @st.cache_data(ttl=60)
 def load_gastos_ligeros():
-    """Carga los gastos SIN traer el texto pesadísimo del archivo comprobante en base64"""
+    """Carga los gastos ordenados cronológicamente (fecha ASC, id ASC) de principio a fin de mes"""
     with engine.connect() as conn:
         query = """
             SELECT id, fecha, concepto, monto, categoria, 
                    CASE WHEN comprobante IS NOT NULL AND length(comprobante) > 5 THEN 1 ELSE 0 END as tiene_comprobante
-            FROM gastos_mensuales ORDER BY fecha DESC
+            FROM gastos_mensuales ORDER BY fecha ASC, id ASC
         """
         return pd.read_sql_query(text(query), conn)
 
 def load_single_comprobante(gasto_id):
-    """Obtiene el comprobante solo cuando el usuario selecciona ver o descargar ese gasto específico"""
     with engine.connect() as conn:
         res = conn.execute(text("SELECT comprobante FROM gastos_mensuales WHERE id = :id"), {"id": gasto_id}).fetchone()
         return res[0] if res else None
+
+@st.cache_data(ttl=60)
+def load_presupuestos_mensuales():
+    with engine.connect() as conn:
+        return pd.read_sql_query(text("SELECT id, mes_año, concepto, monto_inicial, monto_final, categoria FROM presupuestos_mensuales ORDER BY mes_año DESC, id ASC"), conn)
 
 # -----------------------------------------------------------------------------
 # FUNCIONES AUXILIARES PARA COMPROBANTES Y MANEJO DE ARCHIVOS
@@ -319,7 +374,7 @@ def decode_comprobante_json(comp_str):
         return None
 
 # -----------------------------------------------------------------------------
-# GENERACIÓN DE REPORTE PDF
+# GENERACIÓN DE REPORTES PDF
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=300)
 def generate_pdf_report(mes_nombre, df_cierres_mes, df_gastos_mes, tot_efectivo, tot_nequi, tot_davi, tot_caja, tot_gastos, liquidez_neta):
@@ -399,6 +454,90 @@ def generate_pdf_report(mes_nombre, df_cierres_mes, df_gastos_mes, tot_efectivo,
     buffer.seek(0)
     return buffer.getvalue()
 
+@st.cache_data(ttl=300)
+def generate_presupuesto_pdf(mes_nombre, df_pres):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
+    story = []
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('DocTitle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=18, textColor=colors.HexColor('#0369a1'), spaceAfter=4)
+    subtitle_style = ParagraphStyle('DocSubtitle', parent=styles['Normal'], fontName='Helvetica', fontSize=10, textColor=colors.HexColor('#047857'), spaceAfter=14)
+    h2_style = ParagraphStyle('SectionHeading', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=12, textColor=colors.HexColor('#0f172a'), spaceBefore=10, spaceAfter=6)
+    cell_style = ParagraphStyle('Cell', parent=styles['Normal'], fontName='Helvetica', fontSize=9, textColor=colors.HexColor('#1e293b'))
+    cell_bold = ParagraphStyle('CellB', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, textColor=colors.HexColor('#0f172a'))
+    header_cell = ParagraphStyle('HCell', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, textColor=colors.white)
+
+    story.append(Paragraph(f"Presupuesto Mensual — {mes_nombre}", title_style))
+    story.append(Paragraph("Papelería — Planificación Financiera y Ejecución Real", subtitle_style))
+    story.append(Spacer(1, 4))
+
+    tot_ini = df_pres['monto_inicial'].sum() if not df_pres.empty else 0.0
+    tot_fin = df_pres['monto_final'].sum() if not df_pres.empty else 0.0
+    dif = tot_fin - tot_ini
+
+    summary_data = [
+        [Paragraph("Presupuestado (Valor Inicial)", header_cell), Paragraph("Ejecutado (Valor Final)", header_cell), Paragraph("Diferencia / Variación", header_cell)],
+        [Paragraph(f"${tot_ini:,.0f}", cell_bold), Paragraph(f"${tot_fin:,.0f}", cell_bold), Paragraph(f"${dif:,.0f}", cell_bold)]
+    ]
+    t_summary = Table(summary_data, colWidths=[180, 180, 180])
+    t_summary.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#0284c7')),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('BACKGROUND', (0,1), (-1,1), colors.HexColor('#f0f9ff')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#bae6fd')),
+    ]))
+    story.append(t_summary)
+    story.append(Spacer(1, 12))
+
+    story.append(Paragraph("Desglose Detallado por Conceptos", h2_style))
+    
+    table_rows = [[
+        Paragraph("Concepto", header_cell),
+        Paragraph("Categoría", header_cell),
+        Paragraph("Valor Inicial ($)", header_cell),
+        Paragraph("Valor Final ($)", header_cell),
+        Paragraph("Diferencia ($)", header_cell)
+    ]]
+
+    for idx, r in df_pres.iterrows():
+        mi = float(r['monto_inicial'])
+        mf = float(r['monto_final'])
+        d = mf - mi
+        d_str = f"+${d:,.0f}" if d > 0 else (f"-${abs(d):,.0f}" if d < 0 else "$0")
+        
+        table_rows.append([
+            Paragraph(str(r['concepto']), cell_style),
+            Paragraph(str(r.get('categoria', 'General')), cell_style),
+            Paragraph(f"${mi:,.0f}", cell_style),
+            Paragraph(f"${mf:,.0f}", cell_style),
+            Paragraph(d_str, cell_bold)
+        ])
+
+    table_rows.append([
+        Paragraph("TOTAL", header_cell),
+        Paragraph("", header_cell),
+        Paragraph(f"${tot_ini:,.0f}", header_cell),
+        Paragraph(f"${tot_fin:,.0f}", header_cell),
+        Paragraph(f"${dif:,.0f}", header_cell)
+    ])
+
+    t_pres = Table(table_rows, colWidths=[160, 100, 95, 95, 90])
+    t_pres.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#10b981')),
+        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('ROWBACKGROUNDS', (0,1), (-1,-2), [colors.white, colors.HexColor('#f0fdf4')]),
+        ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#047857')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
+    ]))
+    story.append(t_pres)
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.getvalue()
+
 # -----------------------------------------------------------------------------
 # PARSER EXCEL
 # -----------------------------------------------------------------------------
@@ -470,12 +609,12 @@ def parse_daily_excel(uploaded_file):
 # -----------------------------------------------------------------------------
 st.markdown(f"""
 <div class="header-banner">
-    <h1>📚 Sistema de Control de Caja y Contabilidad</h1>
+    <h1>📚 Sistema de Control de Caja y Presupuesto</h1>
     <p>Gestión remota de papelería — Motor: <b>{db_type.upper()}</b></p>
 </div>
 """, unsafe_allow_html=True)
 
-tabs = st.tabs(["📥 Cargar Caja Diaria", "📊 Recuento Mensual", "💸 Gastos Mensuales", "📈 Métricas", "⚙️ Edición / Histórico"])
+tabs = st.tabs(["📥 Cargar Caja Diaria", "📊 Recuento Mensual", "💸 Gastos Mensuales", "📋 Presupuestos Mensuales", "📈 Métricas", "⚙️ Edición / Histórico"])
 
 with tabs[0]:
     st.subheader("📥 Cargar reporte diario enviado desde el local")
@@ -613,7 +752,7 @@ with tabs[1]:
             st.markdown(html_daily, unsafe_allow_html=True)
             
         with col_t2:
-            st.markdown("##### Gastos Mensuales y Mercancía:")
+            st.markdown("##### Gastos Mensuales y Mercancía (Cronológico: Inicio a Fin de Mes):")
             if df_g_mes.empty: st.info("No hay gastos mayores ingresados en este mes.")
             else:
                 html_gastos = """<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; background-color:#ffffff; color:#0f172a; border:1px solid #cbd5e1; font-family:sans-serif; border-radius:8px;">
@@ -685,7 +824,6 @@ with tabs[2]:
             selected_id = options_dict[selected_label]
             selected_row = df_con_comprobante[df_con_comprobante['id'] == selected_id].iloc[0]
             
-            # Carga del archivo solo bajo demanda
             raw_comp_str = load_single_comprobante(selected_id)
             file_info = decode_comprobante_json(raw_comp_str)
             
@@ -709,7 +847,7 @@ with tabs[2]:
 
     st.divider()
     st.subheader("✏️ Edición Rápida y Actualización de Gastos")
-    st.write("Modifica datos de los gastos o adjunta/reemplaza un comprobante si olvidaste subirlo.")
+    st.write("Modifica datos de los gastos (ordenados de inicio a fin de mes) o adjunta/reemplaza comprobantes.")
     
     df_gastos_display = df_gastos_all.copy()
     df_gastos_display['tiene_comprobante'] = df_gastos_display['tiene_comprobante'].map({1: "📎 Sí", 0: "❌ No"})
@@ -770,6 +908,119 @@ with tabs[2]:
                         st.rerun()
 
 with tabs[3]:
+    st.subheader("📋 Presupuestos Mensuales (Proyectado vs Real)")
+    st.write("Planifica y compara el presupuesto proyectado (Valor Inicial) contra lo ejecutado (Valor Final) de cada mes.")
+    
+    df_pres_all = load_presupuestos_mensuales()
+    
+    df_cierres_aux = load_cierres_diarios()
+    meses_cierres = pd.to_datetime(df_cierres_aux['fecha']).dt.strftime('%Y-%m').unique() if not df_cierres_aux.empty else []
+    meses_pres = df_pres_all['mes_año'].unique() if not df_pres_all.empty else []
+    
+    all_months = sorted(list(set(list(meses_pres) + list(meses_cierres) + [date.today().strftime('%Y-%m')])), reverse=True)
+    
+    col_p1, col_p2 = st.columns([1, 1])
+    with col_p1:
+        mes_sel_pres = st.selectbox("Selecciona el Mes para Planificar Presupuesto:", all_months, key="select_mes_presupuesto")
+        
+    df_p_mes = df_pres_all[df_pres_all['mes_año'] == mes_sel_pres].copy()
+    
+    if df_p_mes.empty:
+        st.info(f"Aún no hay conceptos de presupuesto registrados para el mes **{mes_sel_pres}**.")
+        col_seed1, _ = st.columns([1, 1])
+        with col_seed1:
+            if st.button("✨ Cargar Plantilla Estándar de Presupuesto", type="primary"):
+                template_items = [
+                    ("Renta", 1100000.0, 1100000.0, "Gastos Fijos"),
+                    ("Servicios (Agua/Luz/Gas)", 280000.0, 280000.0, "Servicios"),
+                    ("Internet / Teléfono", 75000.0, 75000.0, "Servicios"),
+                    ("Pago de impuestos", 250000.0, 250000.0, "Impuestos"),
+                    ("Abono deuda 5,5M Ana", 160000.0, 160000.0, "Deudas"),
+                    ("Pago Juancho", 120000.0, 120000.0, "Personal"),
+                    ("Pago Ana", 80000.0, 80000.0, "Personal"),
+                    ("Mercancía / Proveedores", 800000.0, 800000.0, "Mercancía"),
+                    ("Abono Fotocopiadora / Inversión", 150000.0, 150000.0, "Inversión/Equipo")
+                ]
+                with engine.begin() as conn:
+                    for c_nom, m_ini, m_fin, c_cat in template_items:
+                        conn.execute(text("""
+                            INSERT INTO presupuestos_mensuales (mes_año, concepto, monto_inicial, monto_final, categoria)
+                            VALUES (:mes, :c, :mi, :mf, :cat);
+                        """), {"mes": mes_sel_pres, "c": c_nom, "mi": m_ini, "mf": m_fin, "cat": c_cat})
+                st.cache_data.clear()
+                st.success("✅ Plantilla cargada con éxito.")
+                st.rerun()
+
+    if not df_p_mes.empty:
+        tot_ini = df_p_mes['monto_inicial'].sum()
+        tot_fin = df_p_mes['monto_final'].sum()
+        dif_tot = tot_fin - tot_ini
+        
+        pdf_pres_bytes = generate_presupuesto_pdf(mes_sel_pres, df_p_mes)
+        with col_p2:
+            st.write("")
+            st.download_button(label="📄 Descargar Presupuesto Mensual en PDF", data=pdf_pres_bytes, file_name=f"Presupuesto_{mes_sel_pres}.pdf", mime="application/pdf", type="primary")
+
+        st.markdown("##### Resumen del Presupuesto:")
+        kp1, kp2, kp3 = st.columns(3)
+        kp1.markdown(f'<div class="metric-card-blue"><div class="metric-card-title">📌 Total Presupuestado (Valor Inicial)</div><div class="metric-card-val">${tot_ini:,.0f}</div></div>', unsafe_allow_html=True)
+        kp2.markdown(f'<div class="metric-card-green"><div class="metric-card-title">💸 Total Ejecutado (Valor Final)</div><div class="metric-card-val">${tot_fin:,.0f}</div></div>', unsafe_allow_html=True)
+        
+        diff_card_class = "metric-card-green" if dif_tot <= 0 else "metric-card-amber"
+        diff_prefix = f"-${abs(dif_tot):,.0f} (Ahorro)" if dif_tot < 0 else (f"+${dif_tot:,.0f} (Exceso)" if dif_tot > 0 else "$0 (En meta)")
+        kp3.markdown(f'<div class="{diff_card_class}"><div class="metric-card-title">⚖️ Diferencia / Variación</div><div class="metric-card-val">{diff_prefix}</div></div>', unsafe_allow_html=True)
+
+        st.write("")
+        st.markdown("##### Tabla Interactiva de Presupuesto (Modificable en vivo):")
+        
+        df_p_mes['diferencia'] = df_p_mes['monto_final'] - df_p_mes['monto_inicial']
+        
+        df_pres_edited = st.data_editor(
+            df_p_mes[['id', 'concepto', 'categoria', 'monto_inicial', 'monto_final', 'diferencia']],
+            num_rows="dynamic",
+            use_container_width=True,
+            column_config={
+                "id": st.column_config.NumberColumn("ID", disabled=True),
+                "concepto": st.column_config.TextColumn("Concepto / Rubro", required=True),
+                "categoria": st.column_config.SelectboxColumn("Categoría", options=["Gastos Fijos", "Servicios", "Impuestos", "Deudas", "Personal", "Mercancía", "Inversión/Equipo", "Otro"]),
+                "monto_inicial": st.column_config.NumberColumn("Valor Inicial (Proyectado $)", format="$%d", required=True),
+                "monto_final": st.column_config.NumberColumn("Valor Final (Ejecutado $)", format="$%d", required=True),
+                "diferencia": st.column_config.NumberColumn("Diferencia ($)", format="$%d", disabled=True)
+            },
+            key=f"presupuesto_editor_{mes_sel_pres}"
+        )
+
+        col_psave, _ = st.columns([1, 2])
+        with col_psave:
+            if st.button("💾 Guardar Cambios en Presupuesto", type="primary"):
+                with engine.begin() as conn:
+                    conn.execute(text("DELETE FROM presupuestos_mensuales WHERE mes_año = :mes"), {"mes": mes_sel_pres})
+                    for _, r in df_pres_edited.iterrows():
+                        c_text = str(r['concepto']).strip() if pd.notna(r['concepto']) else ''
+                        if c_text:
+                            m_ini = float(r['monto_inicial']) if pd.notna(r['monto_inicial']) else 0.0
+                            m_fin = float(r['monto_final']) if pd.notna(r['monto_final']) else 0.0
+                            cat_val = str(r['categoria']) if pd.notna(r['categoria']) else 'General'
+                            conn.execute(text("""
+                                INSERT INTO presupuestos_mensuales (mes_año, concepto, monto_inicial, monto_final, categoria)
+                                VALUES (:mes, :c, :mi, :mf, :cat);
+                            """), {"mes": mes_sel_pres, "c": c_text, "mi": m_ini, "mf": m_fin, "cat": cat_val})
+                st.cache_data.clear()
+                st.success("✅ ¡Presupuesto actualizado correctamente!")
+                st.rerun()
+
+        st.divider()
+        st.markdown("##### 📊 Comparativo Gráfico: Presupuestado vs Real")
+        df_melt = df_p_mes.melt(id_vars=['concepto'], value_vars=['monto_inicial', 'monto_final'], var_name='Tipo', value_name='Monto')
+        df_melt['Tipo'] = df_melt['Tipo'].map({'monto_inicial': 'Valor Inicial (Proyectado)', 'monto_final': 'Valor Final (Ejecutado)'})
+        
+        fig_pres = px.bar(df_melt, x='concepto', y='Monto', color='Tipo', barmode='group', text_auto='.2s',
+                          labels={'concepto': 'Concepto', 'Monto': 'Monto ($)'},
+                          color_discrete_map={'Valor Inicial (Proyectado)': '#0284c7', 'Valor Final (Ejecutado)': '#10b981'})
+        fig_pres.update_layout(plot_bgcolor='white', paper_bgcolor='white', font=dict(color='#0f172a'), yaxis=dict(showgrid=True, gridcolor='#f1f5f9'))
+        st.plotly_chart(fig_pres, use_container_width=True)
+
+with tabs[4]:
     st.subheader("📈 Análisis de Facturación por Días y Curva Mensual")
     df_cierres = load_cierres_diarios()
     df_trans = load_transacciones_diarias()
@@ -793,7 +1044,7 @@ with tabs[3]:
         fig_curve.update_layout(plot_bgcolor='white', paper_bgcolor='white', font=dict(color='#0f172a'), yaxis=dict(showgrid=True, gridcolor='#f1f5f9'))
         st.plotly_chart(fig_curve, use_container_width=True)
 
-with tabs[4]:
+with tabs[5]:
     st.subheader("⚙️ Edición Rápida de Cierres Diarios e Ingresos")
     st.write("Modifica directamente cualquier cierre diario o saldo si hubo un error en fecha, efectivo, Nequi, Daviplata o Banco.")
     
