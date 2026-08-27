@@ -438,8 +438,8 @@ def generate_pdf_presupuesto(mes_nombre, df_presupuesto, total_inicial, total_fi
     story = []
     
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('DocTitle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=18, textColor=colors.HexColor('#0369a1'), spaceAfter=4)
-    subtitle_style = ParagraphStyle('DocSubtitle', parent=styles['Normal'], fontName='Helvetica', fontSize=10, textColor=colors.HexColor('#047857'), spaceAfter=14)
+    title_style = ParagraphStyle('DocTitle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=18, textColor=colors.HexColor('#ea580c'), spaceAfter=4)
+    subtitle_style = ParagraphStyle('DocSubtitle', parent=styles['Normal'], fontName='Helvetica', fontSize=10, textColor=colors.HexColor('#c2410c'), spaceAfter=14)
     h2_style = ParagraphStyle('SectionHeading', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=12, textColor=colors.HexColor('#0f172a'), spaceBefore=10, spaceAfter=6)
     cell_style = ParagraphStyle('Cell', parent=styles['Normal'], fontName='Helvetica', fontSize=9, textColor=colors.HexColor('#1e293b'))
     cell_bold = ParagraphStyle('CellB', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, textColor=colors.HexColor('#0f172a'))
@@ -455,11 +455,11 @@ def generate_pdf_presupuesto(mes_nombre, df_presupuesto, total_inicial, total_fi
     ]
     t_summary = Table(summary_data, colWidths=[180, 180, 180])
     t_summary.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#0284c7')),
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#ea580c')),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('BACKGROUND', (0,1), (-1,1), colors.HexColor('#f0f9ff')),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#bae6fd')),
+        ('BACKGROUND', (0,1), (-1,1), colors.HexColor('#fff7ed')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#fed7aa')),
     ]))
     story.append(t_summary)
     story.append(Spacer(1, 12))
@@ -492,12 +492,12 @@ def generate_pdf_presupuesto(mes_nombre, df_presupuesto, total_inicial, total_fi
 
     t_budget = Table(budget_rows, colWidths=[210, 110, 110, 110])
     t_budget.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#e11d48')),
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#ea580c')),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('ROWBACKGROUNDS', (0,1), (-1,-2), [colors.white, colors.HexColor('#fff1f2')]),
-        ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#be123c')),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#fecdd3')),
+        ('ROWBACKGROUNDS', (0,1), (-1,-2), [colors.white, colors.HexColor('#fff7ed')]),
+        ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#c2410c')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#fed7aa')),
     ]))
     story.append(t_budget)
 
@@ -973,16 +973,16 @@ with tabs[3]:
     if df_pres_edited.empty:
         st.info("No hay datos cargados en el presupuesto.")
     else:
-        html_presupuesto = """<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; background-color:#ffffff; color:#0f172a; border:1px solid #cbd5e1; font-family:sans-serif; border-radius:8px;">
-        <thead><tr style="background-color:#e11d48; color:#ffffff; font-weight:bold; text-align:left;">
-          <th style="padding:10px; border:1px solid #cbd5e1;">Concepto / Rubro</th>
-          <th style="padding:10px; border:1px solid #cbd5e1; text-align:right;">Valor Inicial ($)</th>
-          <th style="padding:10px; border:1px solid #cbd5e1; text-align:right;">Valor Final ($)</th>
-          <th style="padding:10px; border:1px solid #cbd5e1; text-align:right;">Diferencia ($)</th>
+        html_presupuesto = """<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; background-color:#ffffff; color:#0f172a; border:1px solid #fed7aa; font-family:sans-serif; border-radius:8px;">
+        <thead><tr style="background-color:#ea580c; color:#ffffff; font-weight:bold; text-align:left;">
+          <th style="padding:10px; border:1px solid #fed7aa;">Concepto / Rubro</th>
+          <th style="padding:10px; border:1px solid #fed7aa; text-align:right;">Valor Inicial ($)</th>
+          <th style="padding:10px; border:1px solid #fed7aa; text-align:right;">Valor Final ($)</th>
+          <th style="padding:10px; border:1px solid #fed7aa; text-align:right;">Diferencia ($)</th>
         </tr></thead><tbody>"""
         
         for idx, r in df_pres_edited.reset_index().iterrows():
-            bg = "#ffffff" if idx % 2 == 0 else "#fff1f2"
+            bg = "#ffffff" if idx % 2 == 0 else "#fff7ed"
             v_ini = float(r['valor_inicial']) if pd.notna(r['valor_inicial']) else 0.0
             v_fin = float(r['valor_final']) if pd.notna(r['valor_final']) else 0.0
             diff = v_fin - v_ini
@@ -990,17 +990,17 @@ with tabs[3]:
             highlight_style = "background-color:#fef9c3; font-weight:bold; color:#854d0e;" if (v_fin > 0 and v_fin != v_ini) else ""
             
             html_presupuesto += f"""<tr style="background-color:{bg}; color:#0f172a;">
-              <td style="padding:8px; border:1px solid #fecdd3; font-weight:500;">{r['concepto']}</td>
-              <td style="padding:8px; border:1px solid #fecdd3; text-align:right;">${v_ini:,.0f}</td>
-              <td style="padding:8px; border:1px solid #fecdd3; text-align:right; {highlight_style}">${v_fin:,.0f}</td>
-              <td style="padding:8px; border:1px solid #fecdd3; text-align:right; font-weight:bold; color:#be123c;">${diff:,.0f}</td>
+              <td style="padding:8px; border:1px solid #fed7aa; font-weight:500;">{r['concepto']}</td>
+              <td style="padding:8px; border:1px solid #fed7aa; text-align:right;">${v_ini:,.0f}</td>
+              <td style="padding:8px; border:1px solid #fed7aa; text-align:right; {highlight_style}">${v_fin:,.0f}</td>
+              <td style="padding:8px; border:1px solid #fed7aa; text-align:right; font-weight:bold; color:#c2410c;">${diff:,.0f}</td>
             </tr>"""
             
-        html_presupuesto += f"""<tr style="background-color:#ffe4e6; color:#be123c; font-weight:bold;">
-          <td style="padding:10px; border:1px solid #fecdd3;">TOTAL PRESUPUESTO</td>
-          <td style="padding:10px; border:1px solid #fecdd3; text-align:right; font-size:15px;">${tot_pres_inicial:,.0f}</td>
-          <td style="padding:10px; border:1px solid #fecdd3; text-align:right; font-size:15px;">${tot_pres_final:,.0f}</td>
-          <td style="padding:10px; border:1px solid #fecdd3; text-align:right; font-size:15px;">${tot_pres_diff:,.0f}</td>
+        html_presupuesto += f"""<tr style="background-color:#ffedd5; color:#c2410c; font-weight:bold;">
+          <td style="padding:10px; border:1px solid #fed7aa;">TOTAL PRESUPUESTO</td>
+          <td style="padding:10px; border:1px solid #fed7aa; text-align:right; font-size:15px;">${tot_pres_inicial:,.0f}</td>
+          <td style="padding:10px; border:1px solid #fed7aa; text-align:right; font-size:15px;">${tot_pres_final:,.0f}</td>
+          <td style="padding:10px; border:1px solid #fed7aa; text-align:right; font-size:15px;">${tot_pres_diff:,.0f}</td>
         </tr></tbody></table></div>"""
         
         st.markdown(html_presupuesto, unsafe_allow_html=True)
