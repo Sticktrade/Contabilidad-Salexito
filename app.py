@@ -294,13 +294,13 @@ def load_transacciones_diarias():
 
 @st.cache_data(ttl=60)
 def load_gastos_ligeros():
-    """Carga los gastos SIN traer el texto pesadísimo del archivo comprobante en base64"""
+    """Carga los gastos SIN traer el texto pesadísimo del archivo comprobante en base64 (Orden cronológico por defecto)"""
     try:
         with engine.connect() as conn:
             query = """
                 SELECT id, fecha, concepto, monto, categoria, 
                        CASE WHEN comprobante IS NOT NULL AND length(comprobante) > 5 THEN 1 ELSE 0 END as tiene_comprobante
-                FROM gastos_mensuales ORDER BY fecha DESC
+                FROM gastos_mensuales ORDER BY fecha ASC
             """
             return pd.read_sql_query(text(query), conn)
     except Exception:
@@ -666,7 +666,7 @@ with tabs[1]:
         
         if not df_gastos.empty:
             df_gastos['mes_año'] = pd.to_datetime(df_gastos['fecha']).dt.strftime('%Y-%m')
-            df_g_mes = df_gastos[df_gastos['mes_año'] == mes_sel].copy()
+            df_g_mes = df_gastos[df_gastos['mes_año'] == mes_sel].sort_values('fecha', ascending=True).copy()
             tot_gastos_grandes = df_g_mes['monto'].sum()
         else:
             df_g_mes = pd.DataFrame()
