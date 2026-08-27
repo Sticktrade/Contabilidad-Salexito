@@ -215,7 +215,6 @@ engine, db_type, conn_error = get_db_engine()
 if conn_error and "SUPABASE_URL" in st.secrets:
     st.error(f"⚠️ Error al conectar a Supabase:\n\n{conn_error}")
 
-@st.cache_resource
 def init_db():
     try:
         with engine.begin() as conn:
@@ -279,35 +278,50 @@ init_db()
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=60)
 def load_cierres_diarios():
-    with engine.connect() as conn:
-        return pd.read_sql_query(text("SELECT * FROM cierres_diarios ORDER BY fecha ASC"), conn)
+    try:
+        with engine.connect() as conn:
+            return pd.read_sql_query(text("SELECT * FROM cierres_diarios ORDER BY fecha ASC"), conn)
+    except Exception:
+        return pd.DataFrame(columns=['fecha', 'efectivo', 'nequi', 'daviplata', 'banco', 'total', 'observaciones'])
 
 @st.cache_data(ttl=60)
 def load_transacciones_diarias():
-    with engine.connect() as conn:
-        return pd.read_sql_query(text("SELECT * FROM transacciones_diarias"), conn)
+    try:
+        with engine.connect() as conn:
+            return pd.read_sql_query(text("SELECT * FROM transacciones_diarias"), conn)
+    except Exception:
+        return pd.DataFrame(columns=['id', 'fecha', 'concepto', 'cantidad', 'codigo', 'ingreso', 'gastos', 'saldo'])
 
 @st.cache_data(ttl=60)
 def load_gastos_ligeros():
     """Carga los gastos SIN traer el texto pesadísimo del archivo comprobante en base64"""
-    with engine.connect() as conn:
-        query = """
-            SELECT id, fecha, concepto, monto, categoria, 
-                   CASE WHEN comprobante IS NOT NULL AND length(comprobante) > 5 THEN 1 ELSE 0 END as tiene_comprobante
-            FROM gastos_mensuales ORDER BY fecha DESC
-        """
-        return pd.read_sql_query(text(query), conn)
+    try:
+        with engine.connect() as conn:
+            query = """
+                SELECT id, fecha, concepto, monto, categoria, 
+                       CASE WHEN comprobante IS NOT NULL AND length(comprobante) > 5 THEN 1 ELSE 0 END as tiene_comprobante
+                FROM gastos_mensuales ORDER BY fecha DESC
+            """
+            return pd.read_sql_query(text(query), conn)
+    except Exception:
+        return pd.DataFrame(columns=['id', 'fecha', 'concepto', 'monto', 'categoria', 'tiene_comprobante'])
 
 @st.cache_data(ttl=60)
 def load_presupuestos_all():
-    with engine.connect() as conn:
-        return pd.read_sql_query(text("SELECT * FROM presupuestos_mensuales ORDER BY id ASC"), conn)
+    try:
+        with engine.connect() as conn:
+            return pd.read_sql_query(text("SELECT * FROM presupuestos_mensuales ORDER BY id ASC"), conn)
+    except Exception:
+        return pd.DataFrame(columns=['id', 'mes', 'concepto', 'valor_inicial', 'valor_final'])
 
 def load_single_comprobante(gasto_id):
     """Obtiene el comprobante solo cuando el usuario selecciona ver o descargar ese gasto específico"""
-    with engine.connect() as conn:
-        res = conn.execute(text("SELECT comprobante FROM gastos_mensuales WHERE id = :id"), {"id": gasto_id}).fetchone()
-        return res[0] if res else None
+    try:
+        with engine.connect() as conn:
+            res = conn.execute(text("SELECT comprobante FROM gastos_mensuales WHERE id = :id"), {"id": gasto_id}).fetchone()
+            return res[0] if res else None
+    except Exception:
+        return None
 
 # -----------------------------------------------------------------------------
 # FUNCIONES AUXILIARES PARA COMPROBANTES Y MANEJO DE ARCHIVOS
@@ -804,7 +818,8 @@ with tabs[2]:
     st.write("Modifica datos de los gastos o adjunta/reemplaza un comprobante si olvidaste subirlo.")
     
     df_gastos_display = df_gastos_all.copy()
-    df_gastos_display['tiene_comprobante'] = df_gastos_display['tiene_comprobante'].map({1: "📎 Sí", 0: "❌ No"})
+    if 'tiene_comprobante' in df_gastos_display.columns:
+        df_gastos_display['tiene_comprobante'] = df_gastos_display['tiene_comprobante'].map({1: "📎 Sí", 0: "❌ No"})
     
     df_gastos_edited = st.data_editor(
         df_gastos_display[['id', 'fecha', 'concepto', 'monto', 'categoria', 'tiene_comprobante']],
@@ -870,7 +885,7 @@ with tabs[3]:
     # Selección de Mes
     df_cierres_aux = load_cierres_diarios()
     meses_disponibles = []
-    if not df_cierres_aux.empty:
+    if not df_cierres_aux.empty and 'fecha' in df_cierres_aux.columns:
         df_cierres_aux['mes_año'] = pd.to_datetime(df_cierres_aux['fecha']).dt.strftime('%Y-%m')
         meses_disponibles = list(df_cierres_aux['mes_año'].unique())
     
@@ -878,18 +893,18 @@ with tabs[3]:
     if mes_actual_str not in meses_disponibles:
         meses_disponibles.append(mes_actual_str)
         
-    if not df_pres_all.empty:
+    if not df_pres_all.empty and 'mes' in df_pres_all.columns:
         for m in df_pres_all['mes'].unique():
-            if m not in meses_disponibles:
-                meses_disponibles.append(m)
+            if m and str(m) not in meses_disponibles:
+                meses_disponibles.append(str(m))
                 
     col_p1, col_p2 = st.columns([1, 1])
     with col_p1:
         mes_pres_sel = st.selectbox("Selecciona el Mes del Presupuesto:", sorted(meses_disponibles, reverse=True), key="sb_mes_presupuesto")
     
-    df_pres_mes = df_pres_all[df_pres_all['mes'] == mes_pres_sel].copy() if not df_pres_all.empty else pd.DataFrame()
+    df_pres_mes = df_pres_all[df_pres_all['mes'] == mes_pres_sel].copy() if (not df_pres_all.empty and 'mes' in df_pres_all.columns) else pd.DataFrame()
     
-    if df_pres_mes.empty:
+    if df_pres_mes.empty or 'concepto' not in df_pres_mes.columns:
         default_concepts = ["Renta", "Servicios", "Internet", "Abono deuda 5,5M Ana", "Pago Juancho", "Pago Ana", "Mercancia", "Fotocopiadora abono"]
         df_pres_input = pd.DataFrame({
             "concepto": default_concepts,
