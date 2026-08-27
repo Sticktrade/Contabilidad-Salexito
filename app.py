@@ -237,6 +237,12 @@ def init_db():
                         fecha VARCHAR(20), concepto TEXT, monto FLOAT, categoria VARCHAR(100), comprobante TEXT
                     );
                 """))
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS presupuestos_mensuales (
+                        id SERIAL PRIMARY KEY,
+                        mes_año VARCHAR(20), concepto TEXT, valor_inicial FLOAT, valor_final FLOAT
+                    );
+                """))
             else:
                 conn.execute(text("""
                     CREATE TABLE IF NOT EXISTS cierres_diarios (
@@ -256,13 +262,19 @@ def init_db():
                         fecha TEXT, concepto TEXT, monto REAL, categoria TEXT, comprobante TEXT
                     );
                 """))
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS presupuestos_mensuales (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        mes_año TEXT, concepto TEXT, valor_inicial REAL, valor_final REAL
+                    );
+                """))
     except Exception as ex:
         st.warning(f"Error inicializando tablas: {ex}")
 
 init_db()
 
 # -----------------------------------------------------------------------------
-# CONSULTAS OPTIMIZADAS CON CACHÉ (Evita descargas pesadas innecesarias)
+# CONSULTAS OPTIMIZADAS CON CACHÉ
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=60)
 def load_cierres_diarios():
@@ -284,6 +296,12 @@ def load_gastos_ligeros():
             FROM gastos_mensuales ORDER BY fecha DESC
         """
         return pd.read_sql_query(text(query), conn)
+
+@st.cache_data(ttl=60)
+def load_presupuesto_mensual(mes_sel):
+    """Carga los presupuestos creados para un mes en específico"""
+    with engine.connect() as conn:
+        return pd.read_sql_query(text("SELECT id, concepto, valor_inicial, valor_final FROM presupuestos_mensuales WHERE mes_año = :mes ORDER BY id ASC"), conn, params={"mes": mes_sel})
 
 def load_single_comprobante(gasto_id):
     """Obtiene el comprobante solo cuando el usuario selecciona ver o descargar ese gasto específico"""
@@ -319,7 +337,7 @@ def decode_comprobante_json(comp_str):
         return None
 
 # -----------------------------------------------------------------------------
-# GENERACIÓN DE REPORTE PDF
+# GENERACIÓN DE REPORTES PDF (Recuento y Presupuesto)
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=300)
 def generate_pdf_report(mes_nombre, df_cierres_mes, df_gastos_mes, tot_efectivo, tot_nequi, tot_davi, tot_caja, tot_gastos, liquidez_neta):
@@ -394,6 +412,79 @@ def generate_pdf_report(mes_nombre, df_cierres_mes, df_gastos_mes, tot_efectivo,
             ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#fecdd3')),
         ]))
         story.append(t_gastos)
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+@st.cache_data(ttl=300)
+def generate_budget_pdf_report(mes_nombre, df_budget, total_inicial, total_final, diferencia):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
+    story = []
+    
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('DocTitle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=18, textColor=colors.HexColor('#4472C4'), spaceAfter=4)
+    subtitle_style = ParagraphStyle('DocSubtitle', parent=styles['Normal'], fontName='Helvetica', fontSize=10, textColor=colors.HexColor('#475569'), spaceAfter=14)
+    h2_style = ParagraphStyle('SectionHeading', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=12, textColor=colors.HexColor('#0f172a'), spaceBefore=10, spaceAfter=6)
+    cell_style = ParagraphStyle('Cell', parent=styles['Normal'], fontName='Helvetica', fontSize=9, textColor=colors.HexColor('#1e293b'))
+    cell_bold = ParagraphStyle('CellB', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, textColor=colors.HexColor('#0f172a'))
+    header_cell = ParagraphStyle('HCell', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, textColor=colors.white)
+
+    story.append(Paragraph(f"Presupuesto Mensual de Gastos — {mes_nombre}", title_style))
+    story.append(Paragraph("Papelería — Planificación y Control Presupuestario Remoto", subtitle_style))
+    story.append(Spacer(1, 4))
+
+    summary_data = [
+        [Paragraph("Valor Inicial (Planeado)", header_cell), Paragraph("Valor Final (Ejecutado)", header_cell), Paragraph("Diferencia / Variación", header_cell)],
+        [Paragraph(f"${total_inicial:,.0f}", cell_bold), Paragraph(f"${total_final:,.0f}", cell_bold), Paragraph(f"${diferencia:,.0f}", cell_bold)]
+    ]
+    t_summary = Table(summary_data, colWidths=[180, 180, 180])
+    t_summary.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#4472C4')),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('BACKGROUND', (0,1), (-1,1), colors.HexColor('#f0f9ff')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#bae6fd')),
+    ]))
+    story.append(t_summary)
+    story.append(Spacer(1, 14))
+
+    story.append(Paragraph("Desglose de Conceptos y Ejecución", h2_style))
+    budget_rows = [[
+        Paragraph("Concepto / Rubro", header_cell), 
+        Paragraph("Valor Inicial ($)", header_cell), 
+        Paragraph("Valor Final ($)", header_cell), 
+        Paragraph("Diferencia ($)", header_cell)
+    ]]
+    
+    for idx, r in df_budget.iterrows():
+        diff = r['valor_final'] - r['valor_inicial']
+        budget_rows.append([
+            Paragraph(str(r['concepto']), cell_style),
+            Paragraph(f"${r['valor_inicial']:,.0f}", cell_style),
+            Paragraph(f"${r['valor_final']:,.0f}", cell_style),
+            Paragraph(f"${diff:,.0f}", cell_bold if diff != 0 else cell_style)
+        ])
+    
+    budget_rows.append([
+        Paragraph("TOTAL PRESUPUESTO", header_cell),
+        Paragraph(f"${total_inicial:,.0f}", header_cell),
+        Paragraph(f"${total_final:,.0f}", header_cell),
+        Paragraph(f"${diferencia:,.0f}", header_cell)
+    ])
+
+    t_budget = Table(budget_rows, colWidths=[200, 110, 110, 120])
+    t_budget.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#4472C4')),
+        ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+        ('ALIGN', (1,0), (-1,-1), 'RIGHT'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('ROWBACKGROUNDS', (0,1), (-1,-2), [colors.white, colors.HexColor('#f8fafc')]),
+        ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#2b4c7e')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
+    ]))
+    story.append(t_budget)
 
     doc.build(story)
     buffer.seek(0)
@@ -475,8 +566,18 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-tabs = st.tabs(["📥 Cargar Caja Diaria", "📊 Recuento Mensual", "💸 Gastos Mensuales", "📈 Métricas", "⚙️ Edición / Histórico"])
+tabs = st.tabs([
+    "📥 Cargar Caja Diaria", 
+    "📊 Recuento Mensual", 
+    "📋 Presupuesto Mensual", 
+    "💸 Gastos Mensuales", 
+    "📈 Métricas", 
+    "⚙️ Edición / Histórico"
+])
 
+# -----------------------------------------------------------------------------
+# PESTAÑA 1: CARGAR CAJA DIARIA
+# -----------------------------------------------------------------------------
 with tabs[0]:
     st.subheader("📥 Cargar reporte diario enviado desde el local")
     uploaded_file = st.file_uploader("Adjunta el archivo Excel diario (ej. 28-07-2026.xlsx)", type=["xlsx"])
@@ -541,6 +642,9 @@ with tabs[0]:
                 st.cache_data.clear()
                 st.success(f"🎉 ¡Cierre del día {fecha_str} guardado exitosamente!")
 
+# -----------------------------------------------------------------------------
+# PESTAÑA 2: RECUENTO MENSUAL
+# -----------------------------------------------------------------------------
 with tabs[1]:
     st.subheader("📊 Recuento de Caja Mensual")
     df_cierres = load_cierres_diarios()
@@ -637,7 +741,148 @@ with tabs[1]:
                     </tr></tbody></table></div>"""
                 st.markdown(html_gastos, unsafe_allow_html=True)
 
+# -----------------------------------------------------------------------------
+# PESTAÑA 3: PRESUPUESTO MENSUAL (NUEVA PESTAÑA Y FORMULARIO)
+# -----------------------------------------------------------------------------
 with tabs[2]:
+    st.subheader("📋 Planificación y Control de Presupuesto Mensual")
+    st.write("Crea o ajusta el presupuesto de gastos para el mes. Ingresa conceptos, valores iniciales (planeados) y finales (ejecutados).")
+    
+    # Obtención de meses disponibles
+    df_cierres_p = load_cierres_diarios()
+    df_gastos_p = load_gastos_ligeros()
+    
+    meses_existentes = set()
+    if not df_cierres_p.empty:
+        meses_existentes.update(pd.to_datetime(df_cierres_p['fecha']).dt.strftime('%Y-%m').unique())
+    if not df_gastos_p.empty:
+        meses_existentes.update(pd.to_datetime(df_gastos_p['fecha']).dt.strftime('%Y-%m').unique())
+        
+    mes_actual = date.today().strftime('%Y-%m')
+    meses_existentes.add(mes_actual)
+    meses_lista = sorted(list(meses_existentes), reverse=True)
+    
+    col_p1, col_p2 = st.columns([1, 1])
+    with col_p1:
+        mes_p_sel = st.selectbox("Selecciona el Mes del Presupuesto:", meses_lista, index=0)
+    
+    # Cargar presupuesto existente
+    df_p_db = load_presupuesto_mensual(mes_p_sel)
+    
+    if df_p_db.empty:
+        # Plantilla limpia por defecto en $0 con los conceptos de tu Excel
+        default_presupuesto = pd.DataFrame([
+            {"concepto": "Renta", "valor_inicial": 0.0, "valor_final": 0.0},
+            {"concepto": "Servicios", "valor_inicial": 0.0, "valor_final": 0.0},
+            {"concepto": "Internet", "valor_inicial": 0.0, "valor_final": 0.0},
+            {"concepto": "Abono deuda 5,5M Ana", "valor_inicial": 0.0, "valor_final": 0.0},
+            {"concepto": "Pago Juancho", "valor_inicial": 0.0, "valor_final": 0.0},
+            {"concepto": "Pago Ana", "valor_inicial": 0.0, "valor_final": 0.0},
+            {"concepto": "Mercancia", "valor_inicial": 0.0, "valor_final": 0.0},
+            {"concepto": "Fotocopiadora abono", "valor_inicial": 0.0, "valor_final": 0.0},
+        ])
+    else:
+        default_presupuesto = df_p_db[['concepto', 'valor_inicial', 'valor_final']].copy()
+        
+    st.markdown("##### ✏️ Editor Interactivo de Presupuesto")
+    st.caption("Modifica o agrega conceptos y montos directamente en la tabla. Por defecto estarán en $0.")
+    
+    df_p_edited = st.data_editor(
+        default_presupuesto,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "concepto": st.column_config.TextColumn("Concepto / Rubro", required=True),
+            "valor_inicial": st.column_config.NumberColumn("Valor Inicial ($)", format="$%d", min_value=0.0, default=0.0),
+            "valor_final": st.column_config.NumberColumn("Valor Final ($)", format="$%d", min_value=0.0, default=0.0)
+        },
+        key=f"p_editor_{mes_p_sel}"
+    )
+    
+    col_btn1, _ = st.columns([1, 2])
+    with col_btn1:
+        if st.button("💾 Guardar / Actualizar Presupuesto", type="primary", key="save_budget_btn"):
+            with engine.begin() as conn:
+                conn.execute(text("DELETE FROM presupuestos_mensuales WHERE mes_año = :mes;"), {"mes": mes_p_sel})
+                for _, r in df_p_edited.iterrows():
+                    c_name = str(r['concepto']).strip()
+                    if c_name:
+                        v_ini = float(r['valor_inicial']) if r['valor_inicial'] is not None else 0.0
+                        v_fin = float(r['valor_final']) if r['valor_final'] is not None else 0.0
+                        conn.execute(text("""
+                            INSERT INTO presupuestos_mensuales (mes_año, concepto, valor_inicial, valor_final)
+                            VALUES (:mes, :concepto, :v_ini, :v_fin);
+                        """), {"mes": mes_p_sel, "concepto": c_name, "v_ini": v_ini, "v_fin": v_fin})
+            st.cache_data.clear()
+            st.success(f"🎉 ¡Presupuesto de {mes_p_sel} guardado exitosamente!")
+            st.rerun()
+
+    # Totales y Tarjetas Consolidadas
+    tot_v_ini = df_p_edited['valor_inicial'].sum() if not df_p_edited.empty else 0.0
+    tot_v_fin = df_p_edited['valor_final'].sum() if not df_p_edited.empty else 0.0
+    tot_diff = tot_v_fin - tot_v_ini
+    
+    # Botón de Descarga PDF en la columna de la derecha
+    pdf_p_bytes = generate_budget_pdf_report(mes_p_sel, df_p_edited, tot_v_ini, tot_v_fin, tot_diff)
+    with col_p2:
+        st.write("")
+        st.download_button(
+            label="📄 Descargar Presupuesto en PDF",
+            data=pdf_p_bytes,
+            file_name=f"Presupuesto_Mensual_{mes_p_sel}.pdf",
+            mime="application/pdf",
+            type="primary"
+        )
+
+    st.divider()
+    st.markdown(f"### 📊 Vista de Presupuesto Consolidado — {mes_p_sel}")
+    
+    m1, m2, m3 = st.columns(3)
+    m1.markdown(f'<div class="metric-card-blue"><div class="metric-card-title">📌 Total Valor Inicial (Planeado)</div><div class="metric-card-val">${tot_v_ini:,.0f}</div></div>', unsafe_allow_html=True)
+    m2.markdown(f'<div class="metric-card-green"><div class="metric-card-title">📊 Total Valor Final (Ejecutado)</div><div class="metric-card-val">${tot_v_fin:,.0f}</div></div>', unsafe_allow_html=True)
+    
+    card_class = "metric-card-green" if tot_diff <= 0 else "metric-card-blue"
+    diff_label = "Ahorro / Bajo Presupuesto" if tot_diff <= 0 else "Exceso de Gasto"
+    m3.markdown(f'<div class="{card_class}"><div class="metric-card-title">⚖️ Diferencia ({diff_label})</div><div class="metric-card-val">${tot_diff:,.0f}</div></div>', unsafe_allow_html=True)
+    
+    st.write("")
+    
+    # Tabla con diseño HTML elegante idéntico al Recuento Mensual y colores del Excel
+    html_presupuesto = """<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; background-color:#ffffff; color:#0f172a; border:1px solid #cbd5e1; font-family:sans-serif; border-radius:8px;">
+      <thead><tr style="background-color:#4472C4; color:#ffffff; font-weight:bold; text-align:left;">
+        <th style="padding:10px; border:1px solid #cbd5e1;">Concepto / Rubro</th>
+        <th style="padding:10px; border:1px solid #cbd5e1; text-align:right;">Valor Inicial ($)</th>
+        <th style="padding:10px; border:1px solid #cbd5e1; text-align:right;">Valor Final ($)</th>
+        <th style="padding:10px; border:1px solid #cbd5e1; text-align:right;">Diferencia ($)</th>
+      </tr></thead><tbody>"""
+      
+    for idx, r in df_p_edited.reset_index().iterrows():
+        bg = "#ffffff" if idx % 2 == 0 else "#f8fafc"
+        v_i = float(r['valor_inicial']) if r['valor_inicial'] is not None else 0.0
+        v_f = float(r['valor_final']) if r['valor_final'] is not None else 0.0
+        diff_val = v_f - v_i
+        diff_color = "#e11d48" if diff_val > 0 else ("#059669" if diff_val < 0 else "#0f172a")
+        
+        html_presupuesto += f"""<tr style="background-color:{bg}; color:#0f172a;">
+          <td style="padding:8px; border:1px solid #e2e8f0; font-weight:500;">{r['concepto']}</td>
+          <td style="padding:8px; border:1px solid #e2e8f0; text-align:right;">${v_i:,.0f}</td>
+          <td style="padding:8px; border:1px solid #e2e8f0; text-align:right;">${v_f:,.0f}</td>
+          <td style="padding:8px; border:1px solid #e2e8f0; text-align:right; font-weight:bold; color:{diff_color};">${diff_val:,.0f}</td>
+        </tr>"""
+        
+    html_presupuesto += f"""<tr style="background-color:#e0f2fe; color:#0369a1; font-weight:bold;">
+          <td style="padding:10px; border:1px solid #bae6fd;">TOTAL PRESUPUESTO</td>
+          <td style="padding:10px; border:1px solid #bae6fd; text-align:right;">${tot_v_ini:,.0f}</td>
+          <td style="padding:10px; border:1px solid #bae6fd; text-align:right;">${tot_v_fin:,.0f}</td>
+          <td style="padding:10px; border:1px solid #bae6fd; text-align:right; font-size:16px;">${tot_diff:,.0f}</td>
+        </tr></tbody></table></div>"""
+        
+    st.markdown(html_presupuesto, unsafe_allow_html=True)
+
+# -----------------------------------------------------------------------------
+# PESTAÑA 4: GASTOS MENSUALES
+# -----------------------------------------------------------------------------
+with tabs[3]:
     st.subheader("💸 Registrar Gasto Mensual o Compra Grande")
     with st.form("form_gastos_clean", clear_on_submit=True):
         col_g1, col_g2, col_g3 = st.columns(3)
@@ -685,7 +930,6 @@ with tabs[2]:
             selected_id = options_dict[selected_label]
             selected_row = df_con_comprobante[df_con_comprobante['id'] == selected_id].iloc[0]
             
-            # Carga del archivo solo bajo demanda
             raw_comp_str = load_single_comprobante(selected_id)
             file_info = decode_comprobante_json(raw_comp_str)
             
@@ -769,7 +1013,10 @@ with tabs[2]:
                         st.success("✅ Comprobante adjuntado con éxito.")
                         st.rerun()
 
-with tabs[3]:
+# -----------------------------------------------------------------------------
+# PESTAÑA 5: MÉTRICAS
+# -----------------------------------------------------------------------------
+with tabs[4]:
     st.subheader("📈 Análisis de Facturación por Días y Curva Mensual")
     df_cierres = load_cierres_diarios()
     df_trans = load_transacciones_diarias()
@@ -793,7 +1040,10 @@ with tabs[3]:
         fig_curve.update_layout(plot_bgcolor='white', paper_bgcolor='white', font=dict(color='#0f172a'), yaxis=dict(showgrid=True, gridcolor='#f1f5f9'))
         st.plotly_chart(fig_curve, use_container_width=True)
 
-with tabs[4]:
+# -----------------------------------------------------------------------------
+# PESTAÑA 6: EDICIÓN / HISTÓRICO
+# -----------------------------------------------------------------------------
+with tabs[5]:
     st.subheader("⚙️ Edición Rápida de Cierres Diarios e Ingresos")
     st.write("Modifica directamente cualquier cierre diario o saldo si hubo un error en fecha, efectivo, Nequi, Daviplata o Banco.")
     
