@@ -814,67 +814,107 @@ with tabs[2]:
                         st.info("📄 Archivo PDF adjunto. Haz clic a la izquierda para descargarlo y abrirlo.")
 
     st.divider()
-    st.subheader("✏️ Edición Rápida y Actualización de Gastos")
-    st.write("Modifica datos de los gastos o adjunta/reemplaza un comprobante si olvidaste subirlo.")
+    st.subheader("✏️ Edición Rápida, Filtros y Actualización de Gastos")
+    st.write("Filtra por categoría o rango de fechas, visualiza la categoría de cada gasto y consulta el total de los gastos filtrados.")
     
-    df_gastos_display = df_gastos_all.copy()
-    if 'tiene_comprobante' in df_gastos_display.columns:
-        df_gastos_display['tiene_comprobante'] = df_gastos_display['tiene_comprobante'].map({1: "📎 Sí", 0: "❌ No"})
-    
-    df_gastos_edited = st.data_editor(
-        df_gastos_display[['id', 'fecha', 'concepto', 'monto', 'categoria', 'tiene_comprobante']],
-        num_rows="dynamic",
-        use_container_width=True,
-        column_config={
-            "id": st.column_config.NumberColumn("ID", disabled=True),
-            "fecha": st.column_config.TextColumn("Fecha (AAAA-MM-DD)", required=True),
-            "concepto": st.column_config.TextColumn("Concepto / Proveedor", required=True),
-            "monto": st.column_config.NumberColumn("Monto ($)", format="$%d", required=True),
-            "categoria": st.column_config.SelectboxColumn("Categoría", options=["Arriendo", "Servicios (Agua/Luz/Gas)", "Internet/Teléfono", "Mercancía/Proveedores", "Pago Deuda/Terceros", "Otro"]),
-            "tiene_comprobante": st.column_config.TextColumn("Comprobante", disabled=True)
-        },
-        key="gastos_editor_table"
-    )
-    
-    col_e1, col_e2 = st.columns([2, 2])
-    with col_e1:
-        if st.button("💾 Guardar Cambios de Texto / Montos", type="primary"):
-            with engine.begin() as conn:
-                for _, r in df_gastos_edited.iterrows():
-                    g_id = r['id']
-                    if pd.notna(g_id):
-                        m_val = float(r['monto'])
-                        if m_val > 0: m_val = -m_val
-                        conn.execute(text("""
-                            UPDATE gastos_mensuales 
-                            SET fecha = :fecha, concepto = :concepto, monto = :monto, categoria = :categoria
-                            WHERE id = :id;
-                        """), {
-                            "fecha": str(r['fecha']),
-                            "concepto": str(r['concepto']).upper().strip(),
-                            "monto": m_val,
-                            "categoria": str(r['categoria']),
-                            "id": int(g_id)
-                        })
-            st.cache_data.clear()
-            st.success("✅ ¡Gastos modificados correctamente!")
-            st.rerun()
+    if df_gastos_all.empty:
+        st.info("No hay gastos registrados para editar o filtrar.")
+    else:
+        df_gastos_display = df_gastos_all.copy()
+        df_gastos_display['tiene_comprobante_str'] = df_gastos_display['tiene_comprobante'].map({1: "📎 Sí", 0: "❌ No"}) if 'tiene_comprobante' in df_gastos_display.columns else "❌ No"
+        df_gastos_display['fecha_dt'] = pd.to_datetime(df_gastos_display['fecha'], errors='coerce')
+        
+        min_date = df_gastos_display['fecha_dt'].min().date() if not df_gastos_display['fecha_dt'].isna().all() else date.today()
+        max_date = df_gastos_display['fecha_dt'].max().date() if not df_gastos_display['fecha_dt'].isna().all() else date.today()
+        
+        # Filtros interactivos
+        col_flt1, col_flt2, col_flt3 = st.columns([1.5, 2, 1.5])
+        with col_flt1:
+            cats_list = ["Todas"] + sorted([str(c) for c in df_gastos_display['categoria'].unique() if pd.notna(c)])
+            cat_filtro = st.selectbox("🔍 Filtrar por Categoría:", cats_list, key="filtro_cat_gastos")
+            
+        with col_flt2:
+            rango_fechas = st.date_input(
+                "📅 Rango de Fechas (Inicio - Fin):",
+                value=(min_date, max_date),
+                key="filtro_fechas_gastos"
+            )
+            
+        # Filtrado de DataFrame
+        df_gastos_filtrado = df_gastos_display.copy()
+        if cat_filtro != "Todas":
+            df_gastos_filtrado = df_gastos_filtrado[df_gastos_filtrado['categoria'] == cat_filtro]
+            
+        if isinstance(rango_fechas, (tuple, list)) and len(rango_fechas) == 2:
+            f_inicio, f_fin = rango_fechas[0], rango_fechas[1]
+            df_gastos_filtrado = df_gastos_filtrado[
+                (df_gastos_filtrado['fecha_dt'].dt.date >= f_inicio) & 
+                (df_gastos_filtrado['fecha_dt'].dt.date <= f_fin)
+            ]
+        elif isinstance(rango_fechas, (tuple, list)) and len(rango_fechas) == 1:
+            f_inicio = rango_fechas[0]
+            df_gastos_filtrado = df_gastos_filtrado[df_gastos_filtrado['fecha_dt'].dt.date >= f_inicio]
+            
+        tot_filtrado = df_gastos_filtrado['monto'].abs().sum() if not df_gastos_filtrado.empty else 0.0
+        
+        with col_flt3:
+            st.markdown(f'<div class="metric-card-amber" style="margin-top: 5px;"><div class="metric-card-title">💰 Total Gastos Filtrados</div><div class="metric-card-val">${tot_filtrado:,.0f}</div></div>', unsafe_allow_html=True)
+            
+        st.write("")
+        df_gastos_edited = st.data_editor(
+            df_gastos_filtrado[['id', 'fecha', 'concepto', 'monto', 'categoria', 'tiene_comprobante_str']],
+            num_rows="dynamic",
+            use_container_width=True,
+            column_config={
+                "id": st.column_config.NumberColumn("ID", disabled=True),
+                "fecha": st.column_config.TextColumn("Fecha (AAAA-MM-DD)", required=True),
+                "concepto": st.column_config.TextColumn("Concepto / Proveedor", required=True),
+                "monto": st.column_config.NumberColumn("Monto ($)", format="$%d", required=True),
+                "categoria": st.column_config.SelectboxColumn("Categoría", options=["Arriendo", "Servicios (Agua/Luz/Gas)", "Internet/Teléfono", "Mercancía/Proveedores", "Pago Deuda/Terceros", "Otro"], required=True),
+                "tiene_comprobante_str": st.column_config.TextColumn("Comprobante", disabled=True)
+            },
+            key="gastos_editor_table"
+        )
+        
+        col_e1, col_e2 = st.columns([2, 2])
+        with col_e1:
+            if st.button("💾 Guardar Cambios de Texto / Montos", type="primary"):
+                with engine.begin() as conn:
+                    for _, r in df_gastos_edited.iterrows():
+                        g_id = r['id']
+                        if pd.notna(g_id):
+                            m_val = float(r['monto'])
+                            if m_val > 0: m_val = -m_val
+                            conn.execute(text("""
+                                UPDATE gastos_mensuales 
+                                SET fecha = :fecha, concepto = :concepto, monto = :monto, categoria = :categoria
+                                WHERE id = :id;
+                            """), {
+                                "fecha": str(r['fecha']),
+                                "concepto": str(r['concepto']).upper().strip(),
+                                "monto": m_val,
+                                "categoria": str(r['categoria']),
+                                "id": int(g_id)
+                            })
+                st.cache_data.clear()
+                st.success("✅ ¡Gastos modificados correctamente!")
+                st.rerun()
 
-    with col_e2:
-        with st.expander("📎 Adjuntar o Reemplazar Comprobante en un Gasto Existente"):
-            options_edit = {f"[{r['fecha']}] {r['concepto']} (${abs(r['monto']):,.0f})": r['id'] for _, r in df_gastos_all.iterrows()}
-            if options_edit:
-                selected_edit_label = st.selectbox("Selecciona el gasto al cual agregarle el comprobante:", list(options_edit.keys()))
-                edit_id = options_edit[selected_edit_label]
-                new_file = st.file_uploader("Selecciona el archivo comprobante:", type=["pdf", "png", "jpg", "jpeg", "webp"], key="edit_uploader")
-                if st.button("💾 Adjuntar Comprobante al Gasto"):
-                    if new_file:
-                        new_json = encode_file_to_json(new_file)
-                        with engine.begin() as conn:
-                            conn.execute(text("UPDATE gastos_mensuales SET comprobante = :comp WHERE id = :id;"), {"comp": new_json, "id": edit_id})
-                        st.cache_data.clear()
-                        st.success("✅ Comprobante adjuntado con éxito.")
-                        st.rerun()
+        with col_e2:
+            with st.expander("📎 Adjuntar o Reemplazar Comprobante en un Gasto Existente"):
+                options_edit = {f"[{r['fecha']}] {r['concepto']} (${abs(r['monto']):,.0f})": r['id'] for _, r in df_gastos_all.iterrows()}
+                if options_edit:
+                    selected_edit_label = st.selectbox("Selecciona el gasto al cual agregarle el comprobante:", list(options_edit.keys()))
+                    edit_id = options_edit[selected_edit_label]
+                    new_file = st.file_uploader("Selecciona el archivo comprobante:", type=["pdf", "png", "jpg", "jpeg", "webp"], key="edit_uploader")
+                    if st.button("💾 Adjuntar Comprobante al Gasto"):
+                        if new_file:
+                            new_json = encode_file_to_json(new_file)
+                            with engine.begin() as conn:
+                                conn.execute(text("UPDATE gastos_mensuales SET comprobante = :comp WHERE id = :id;"), {"comp": new_json, "id": edit_id})
+                            st.cache_data.clear()
+                            st.success("✅ Comprobante adjuntado con éxito.")
+                            st.rerun()
 
 with tabs[3]:
     st.subheader("📋 Presupuesto de Gastos Mensuales")
