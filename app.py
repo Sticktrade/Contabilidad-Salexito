@@ -824,8 +824,9 @@ with tabs[2]:
         df_gastos_display['tiene_comprobante_str'] = df_gastos_display['tiene_comprobante'].map({1: "📎 Sí", 0: "❌ No"}) if 'tiene_comprobante' in df_gastos_display.columns else "❌ No"
         df_gastos_display['fecha_dt'] = pd.to_datetime(df_gastos_display['fecha'], errors='coerce')
         
-        min_date = df_gastos_display['fecha_dt'].min().date() if not df_gastos_display['fecha_dt'].isna().all() else date.today()
-        max_date = df_gastos_display['fecha_dt'].max().date() if not df_gastos_display['fecha_dt'].isna().all() else date.today()
+        # Calcular el día 1 del mes actual y la fecha de hoy
+        hoy = date.today()
+        primer_dia_mes = hoy.replace(day=1)
         
         # Filtros interactivos
         col_flt1, col_flt2, col_flt3 = st.columns([1.5, 2, 1.5])
@@ -836,7 +837,7 @@ with tabs[2]:
         with col_flt2:
             rango_fechas = st.date_input(
                 "📅 Rango de Fechas (Inicio - Fin):",
-                value=(min_date, max_date),
+                value=(primer_dia_mes, hoy),  # <--- Aquí asignamos las nuevas fechas por defecto
                 key="filtro_fechas_gastos"
             )
             
