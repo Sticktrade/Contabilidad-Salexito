@@ -880,11 +880,25 @@ with tabs[2]:
         with col_e1:
             if st.button("💾 Guardar Cambios de Texto / Montos", type="primary"):
                 with engine.begin() as conn:
+                    # 1. Detectar qué gastos fueron eliminados de la tabla
+                    original_ids = df_gastos_filtrado['id'].dropna().tolist()
+                    edited_ids = df_gastos_edited['id'].dropna().tolist()
+                    gastos_eliminados = list(set(original_ids) - set(edited_ids))
+                    
+                    # Eliminar de la base de datos
+                    for d_id in gastos_eliminados:
+                        conn.execute(text("DELETE FROM gastos_mensuales WHERE id = :id;"), {"id": int(d_id)})
+                        
+                    # 2. Actualizar los existentes o insertar los nuevos creados en la tabla
                     for _, r in df_gastos_edited.iterrows():
                         g_id = r['id']
+                        
+                        # Validar el monto
+                        m_val = float(r['monto']) if pd.notna(r['monto']) else 0.0
+                        if m_val > 0: m_val = -m_val
+                        
                         if pd.notna(g_id):
-                            m_val = float(r['monto'])
-                            if m_val > 0: m_val = -m_val
+                            # Actualizar un gasto existente
                             conn.execute(text("""
                                 UPDATE gastos_mensuales 
                                 SET fecha = :fecha, concepto = :concepto, monto = :monto, categoria = :categoria
@@ -896,8 +910,20 @@ with tabs[2]:
                                 "categoria": str(r['categoria']),
                                 "id": int(g_id)
                             })
+                        else:
+                            # Insertar nuevo gasto si se agregó una fila directamente en el editor
+                            conn.execute(text("""
+                                INSERT INTO gastos_mensuales (fecha, concepto, monto, categoria)
+                                VALUES (:fecha, :concepto, :monto, :categoria);
+                            """), {
+                                "fecha": str(r['fecha']),
+                                "concepto": str(r['concepto']).upper().strip(),
+                                "monto": m_val,
+                                "categoria": str(r['categoria'])
+                            })
+                            
                 st.cache_data.clear()
-                st.success("✅ ¡Gastos modificados correctamente!")
+                st.success("✅ ¡Gastos modificados y actualizados correctamente!")
                 st.rerun()
 
         with col_e2:
