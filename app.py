@@ -198,8 +198,12 @@ st.markdown("""
 def get_db_engine():
     if "SUPABASE_URL" in st.secrets and st.secrets["SUPABASE_URL"].strip():
         db_url = st.secrets["SUPABASE_URL"].strip()
+        # Forzamos explícitamente el dialecto para usar psycopg2 (versión 2)
         if db_url.startswith("postgres://"):
-            db_url = db_url.replace("postgres://", "postgresql://", 1)
+            db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
+        elif db_url.startswith("postgresql://"):
+            db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+            
         try:
             eng = create_engine(db_url, pool_pre_ping=True, pool_size=5, max_overflow=10)
             with eng.connect() as conn:
