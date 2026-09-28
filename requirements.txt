@@ -3,5 +3,5 @@ pandas
 openpyxl
 plotly
 reportlab
-psycopg-binary
+psycopg2-binary
 sqlalchemy
