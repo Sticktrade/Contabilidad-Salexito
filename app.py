@@ -751,16 +751,30 @@ with tabs[2]:
     st.subheader("💸 Registrar Gasto Mensual o Compra Grande")
     with st.form("form_gastos_clean", clear_on_submit=True):
         col_g1, col_g2, col_g3 = st.columns(3)
-        with col_g1: fecha_gasto = st.date_input("Fecha:", value=date.today())
-        with col_g2: categoria_gasto = st.selectbox("Categoría:", ["Arriendo", "Servicios (Agua/Luz/Gas)", "Internet/Teléfono", "Mercancía/Proveedores", "Pago Deuda/Terceros", "Otro"])
-        with col_g3: monto_gasto = st.number_input("Monto en Pesos ($):", min_value=0.0, step=1000.0)
+        with col_g1: 
+            fecha_gasto = st.date_input("Fecha:", value=date.today())
+        with col_g2: 
+            categoria_gasto = st.selectbox("Categoría:", ["Arriendo", "Servicios (Agua/Luz/Gas)", "Internet/Teléfono", "Mercancía/Proveedores", "Pago Deuda/Terceros", "Otro"])
+        with col_g3: 
+            # Se agrega value=None para que aparezca en blanco por defecto
+            monto_gasto = st.number_input(
+                "Monto en Pesos ($):", 
+                min_value=0.0, 
+                step=1000.0, 
+                value=None, 
+                placeholder="Ej: 50000"
+            )
         
         col_g4, col_g5 = st.columns([2, 2])
-        with col_g4: concepto_gasto = st.text_input("Concepto / Proveedor:")
-        with col_g5: uploaded_comprobante = st.file_uploader("📎 Adjuntar Comprobante (Opcional - Imagen o PDF):", type=["pdf", "png", "jpg", "jpeg", "webp"])
+        with col_g4: 
+            concepto_gasto = st.text_input("Concepto / Proveedor:")
+        with col_g5: 
+            uploaded_comprobante = st.file_uploader("📎 Adjuntar Comprobante (Opcional - Imagen o PDF):", type=["pdf", "png", "jpg", "jpeg", "webp"])
         
         submitted = st.form_submit_button("➕ Registrar Gasto Mensual", type="primary")
-        if submitted and monto_gasto > 0 and concepto_gasto.strip():
+        
+        # Validamos que monto_gasto no sea None antes de comparar > 0
+        if submitted and monto_gasto is not None and monto_gasto > 0 and concepto_gasto.strip():
             comprobante_json = encode_file_to_json(uploaded_comprobante)
             with engine.begin() as conn:
                 conn.execute(text("""
