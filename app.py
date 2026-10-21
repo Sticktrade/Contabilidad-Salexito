@@ -1118,7 +1118,7 @@ with tabs[5]:
     st.subheader("⚙️ Edición Rápida de Cierres Diarios e Ingresos")
     st.write("Modifica directamente cualquier cierre diario o saldo si hubo un error en fecha, efectivo, Nequi, Daviplata o Banco.")
     
-    df_all = load_cierres_diarios()
+    df_all = load_cierres_diarios().sort_values(by="fecha", ascending=False)
     
     if not df_all.empty:
         df_edit_hist = st.data_editor(
