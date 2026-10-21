@@ -585,9 +585,9 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-tabs = st.tabs(["📥 Cargar Caja Diaria", "📊 Recuento Mensual", "💸 Gastos Mensuales", "📋 Presupuestos", "📈 Métricas", "⚙️ Edición / Histórico"])
+tabs = st.tabs(["📊 Recuento Mensual", "📥 Cargar Caja Diaria", "💸 Gastos Mensuales", "📋 Presupuestos", "📈 Métricas", "⚙️ Edición / Histórico"])
 
-with tabs[0]:
+with tabs[1]:
     st.subheader("📥 Cargar reporte diario enviado desde el local")
     uploaded_file = st.file_uploader("Adjunta el archivo Excel diario (ej. 28-07-2026.xlsx)", type=["xlsx"])
     
@@ -651,7 +651,7 @@ with tabs[0]:
                 st.cache_data.clear()
                 st.success(f"🎉 ¡Cierre del día {fecha_str} guardado exitosamente!")
 
-with tabs[1]:
+with tabs[0]:
     st.subheader("📊 Recuento de Caja Mensual")
     df_cierres = load_cierres_diarios()
     df_gastos = load_gastos_ligeros()
