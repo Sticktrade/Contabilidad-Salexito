@@ -1338,77 +1338,68 @@ with tabs[6]:
     if not df_deudas.empty:
         df_pendientes = df_deudas[df_deudas['estado'] != 'Saldada'].copy()
         
-        # 2. Registrar Abonos
+        # 2. Registrar Abonos optimizado sin recargas (Formulario unificado)
         if not df_pendientes.empty:
             st.markdown("##### ⏳ Registrar Abono a Deuda")
             
-            # El selector queda FUERA del form para cargar los datos dinámicamente
             opciones_selector = []
             for _, r in df_pendientes.iterrows():
                 falta = float(r['monto_total']) - float(r['monto_abonado'])
                 falta_str = f"${falta:,.0f}".replace(",", ".")
                 opciones_selector.append(f"[{r['mes_origen']}] {r['concepto']} - Falta: {falta_str}")
                 
-            deuda_sel = st.selectbox("Selecciona una deuda para abonar:", opciones_selector)
-            idx_sel = opciones_selector.index(deuda_sel)
-            deuda_actual = df_pendientes.iloc[idx_sel]
-
-            # El formulario evita que Streamlit recargue la app al escribir montos o fechas
             with st.form("form_registro_abono", clear_on_submit=True):
-                col_ab1, col_ab2 = st.columns([1, 2])
+                col_ab1, col_ab2 = st.columns([1.5, 1])
                 with col_ab1:
-                    max_abonar = float(deuda_actual['monto_total']) - float(deuda_actual['monto_abonado'])
-                    monto_abono = st.number_input("Monto a abonar HOY ($):", min_value=0.0, max_value=max_abonar, step=1000.0, format="%d", value=None)
-                    fecha_abono = st.date_input("Fecha del abono (Salida de caja):", value=date.today())
+                    deuda_sel = st.selectbox("Selecciona una deuda para abonar:", opciones_selector)
+                    
+                    col_ab_in1, col_ab_in2 = st.columns(2)
+                    with col_ab_in1:
+                        monto_abono = st.number_input("Monto a abonar HOY ($):", min_value=0.0, step=1000.0, format="%d", value=None)
+                    with col_ab_in2:
+                        fecha_abono = st.date_input("Fecha del abono (Salida de caja):", value=date.today())
                 
                 with col_ab2:
-                    tot_str = f"${float(deuda_actual['monto_total']):,.0f}".replace(",", ".")
-                    ab_str = f"${float(deuda_actual['monto_abonado']):,.0f}".replace(",", ".")
+                    st.info("💡 **Ahorro de Carga:** Selecciona la deuda y el monto. No verás recargas visuales hasta que presiones el botón de abajo.")
+                    submit_abono = st.form_submit_button("💸 Registrar Abono", type="primary", use_container_width=True)
                     
-                    st.write("") 
-                    html_info = f"""
-                    <div style="background-color: #eff6ff; padding: 12px; border-radius: 8px; border: 1px solid #bfdbfe; color: #1e3a8a; font-family: sans-serif; margin-bottom: 15px;">
-                        <span style="font-size: 15px;"><b>Deuda Total:</b> {tot_str} &nbsp;|&nbsp; <b>Abonado hasta ahora:</b> {ab_str}</span>
-                    </div>
-                    """
-                    st.markdown(html_info, unsafe_allow_html=True)
-                    
-                    submit_abono = st.form_submit_button("💸 Registrar Abono", type="primary")
-                    
-                    if submit_abono:
-                        if monto_abono is not None and monto_abono > 0:
-                            nuevo_abonado = float(deuda_actual['monto_abonado']) + float(monto_abono)
-                            deuda_total = float(deuda_actual['monto_total'])
-                            nuevo_estado = str('Saldada' if nuevo_abonado >= deuda_total else 'Pendiente')
-                            deuda_id = int(deuda_actual['id'])
-                            fecha_str = str(fecha_abono.strftime("%Y-%m-%d"))
-                            
-                            hist_actual = str(deuda_actual['historial_pagos']) if pd.notna(deuda_actual['historial_pagos']) else ""
-                            nuevo_registro = f"{fecha_str}: ${monto_abono:,.0f}".replace(",", ".")
-                            nuevo_historial = f"{hist_actual} | {nuevo_registro}".strip(" | ")
-                            
-                            concepto_gasto = str(f"Abono a deuda: {deuda_actual['concepto']} (Origen: {deuda_actual['mes_origen']})")
-                            monto_gasto_insert = float(-abs(monto_abono))
-                            
-                            with engine.begin() as conn:
-                                if db_type == "postgres": conn.execute(text("SET search_path TO public;"))
-                                    
-                                conn.execute(text("""
-                                    UPDATE public.cuentas_por_pagar 
-                                    SET monto_abonado = :abonado, estado = :estado, historial_pagos = :hist 
-                                    WHERE id = :id
-                                """), {"abonado": nuevo_abonado, "estado": nuevo_estado, "hist": nuevo_historial, "id": deuda_id})
-                                
-                                conn.execute(text("""
-                                    INSERT INTO public.gastos_mensuales (fecha, concepto, monto, categoria)
-                                    VALUES (:fecha, :concepto, :monto, 'Pago Deuda/Terceros');
-                                """), {"fecha": fecha_str, "concepto": concepto_gasto, "monto": monto_gasto_insert})
-                                
-                            st.cache_data.clear()
-                            st.success("Abono registrado exitosamente.")
-                            st.rerun()
+                if submit_abono:
+                    if monto_abono is not None and monto_abono > 0:
+                        idx_sel = opciones_selector.index(deuda_sel)
+                        deuda_actual = df_pendientes.iloc[idx_sel]
                         
-        # 3. Resumen Visual Histórico (Tabla HTML Bonita)
+                        nuevo_abonado = float(deuda_actual['monto_abonado']) + float(monto_abono)
+                        deuda_total = float(deuda_actual['monto_total'])
+                        nuevo_estado = str('Saldada' if nuevo_abonado >= deuda_total else 'Pendiente')
+                        deuda_id = int(deuda_actual['id'])
+                        fecha_str = str(fecha_abono.strftime("%Y-%m-%d"))
+                        
+                        hist_actual = str(deuda_actual['historial_pagos']) if pd.notna(deuda_actual['historial_pagos']) else ""
+                        nuevo_registro = f"{fecha_str}: ${monto_abono:,.0f}".replace(",", ".")
+                        nuevo_historial = f"{hist_actual} | {nuevo_registro}".strip(" | ")
+                        
+                        concepto_gasto = str(f"Abono a deuda: {deuda_actual['concepto']} (Origen: {deuda_actual['mes_origen']})")
+                        monto_gasto_insert = float(-abs(monto_abono))
+                        
+                        with engine.begin() as conn:
+                            if db_type == "postgres": conn.execute(text("SET search_path TO public;"))
+                                
+                            conn.execute(text("""
+                                UPDATE public.cuentas_por_pagar 
+                                SET monto_abonado = :abonado, estado = :estado, historial_pagos = :hist 
+                                WHERE id = :id
+                            """), {"abonado": nuevo_abonado, "estado": nuevo_estado, "hist": nuevo_historial, "id": deuda_id})
+                            
+                            conn.execute(text("""
+                                INSERT INTO public.gastos_mensuales (fecha, concepto, monto, categoria)
+                                VALUES (:fecha, :concepto, :monto, 'Pago Deuda/Terceros');
+                            """), {"fecha": fecha_str, "concepto": concepto_gasto, "monto": monto_gasto_insert})
+                            
+                        st.cache_data.clear()
+                        st.success("Abono registrado exitosamente.")
+                        st.rerun()
+                        
+        # 3. Resumen Visual Histórico
         st.divider()
         st.markdown("##### 📊 Resumen Histórico de Deudas")
         
@@ -1456,7 +1447,6 @@ with tabs[6]:
         tot_p_f = f"${tot_pendiente_global:,.0f}".replace(",", ".")
         tot_a_f = f"${tot_abonado_global:,.0f}".replace(",", ".")
         
-        # Fila Final expandida para mostrar todas las métricas distribuidas en sus columnas
         html_deudas += f"""<tr style="background-color:#ffe4e6; color:#be123c; font-weight:bold;">
               <td colspan="2" style="padding:10px; border:1px solid #fecdd3; text-align:right;">TOTALES ACUMULADOS</td>
               <td style="padding:10px; border:1px solid #fecdd3; text-align:right; font-size:14px;">{tot_g_f}</td>
@@ -1472,8 +1462,10 @@ with tabs[6]:
         st.write("")
         st.download_button(label="📄 Exportar Histórico a PDF", data=pdf_bytes_deudas, file_name=f"Reporte_Deudas_{date.today().strftime('%Y-%m-%d')}.pdf", mime="application/pdf", type="primary")
 
-        # 4. Modo Edición Estricto 
+        # 4. Modo Edición Estricto y Sincronizado
         with st.expander("✏️ Modo Edición (Modificar montos o eliminar deudas con error)"):
+            st.info("💡 **NUEVO:** Ahora 'Abonado' y 'Estado' se calculan solos. Si borras un abono en el texto de 'Historial Abonos', el sistema actualizará los saldos y borrará el registro sobrante en tus Gastos Mensuales.")
+            
             df_editor_deudas = st.data_editor(
                 df_deudas[['id', 'mes_origen', 'concepto', 'monto_total', 'monto_abonado', 'historial_pagos', 'estado']],
                 num_rows="dynamic",
@@ -1483,9 +1475,9 @@ with tabs[6]:
                     "mes_origen": st.column_config.TextColumn("Mes Origen", required=True),
                     "concepto": st.column_config.TextColumn("Concepto", required=True),
                     "monto_total": st.column_config.NumberColumn("Total ($)", format="%d", required=True),
-                    "monto_abonado": st.column_config.NumberColumn("Abonado ($)", format="%d", required=True),
-                    "historial_pagos": st.column_config.TextColumn("Historial Abonos"),
-                    "estado": st.column_config.SelectboxColumn("Estado", options=["Pendiente", "Saldada"], required=True)
+                    "monto_abonado": st.column_config.NumberColumn("Abonado (Calculado)", disabled=True),
+                    "historial_pagos": st.column_config.TextColumn("Historial Abonos (Edita esto)"),
+                    "estado": st.column_config.TextColumn("Estado (Calculado)", disabled=True)
                 },
                 key="tabla_edicion_deudas"
             )
@@ -1497,26 +1489,55 @@ with tabs[6]:
                 
                 with engine.begin() as conn:
                     if db_type == "postgres": conn.execute(text("SET search_path TO public;"))
+                    
+                    # 1. Limpiar deudas borradas por completo y todos sus gastos asociados
                     for d_id in deudas_eliminadas:
+                        row_del = df_deudas[df_deudas['id'] == d_id].iloc[0]
+                        c_base = f"Abono a deuda: {row_del['concepto']} (Origen: {row_del['mes_origen']})"
+                        conn.execute(text("DELETE FROM public.gastos_mensuales WHERE concepto = :c;"), {"c": c_base})
                         conn.execute(text("DELETE FROM public.cuentas_por_pagar WHERE id = :id;"), {"id": int(d_id)})
                         
+                    # 2. Actualizar las filas editadas leyendo el historial
+                    import re
                     for _, r in df_editor_deudas.iterrows():
                         v_tot = float(r['monto_total']) if pd.notna(r['monto_total']) else 0.0
-                        v_abo = float(r['monto_abonado']) if pd.notna(r['monto_abonado']) else 0.0
                         v_hist = str(r['historial_pagos']) if pd.notna(r['historial_pagos']) else ""
+                        c_base = f"Abono a deuda: {r['concepto']} (Origen: {r['mes_origen']})"
+                        
+                        # Eliminar los gastos antiguos de esta deuda específica para evitar huérfanos si se editó el concepto
+                        if pd.notna(r['id']):
+                            old_row = df_deudas[df_deudas['id'] == r['id']].iloc[0]
+                            old_c_base = f"Abono a deuda: {old_row['concepto']} (Origen: {old_row['mes_origen']})"
+                            conn.execute(text("DELETE FROM public.gastos_mensuales WHERE concepto = :c;"), {"c": old_c_base})
+                        
+                        # Extraer todos los montos del texto con expresiones regulares
+                        matches = re.findall(r'(\d{4}-\d{2}-\d{2}):\s*\$([\d\.,]+)', v_hist)
+                        
+                        v_abo = 0.0
+                        # Reinsertar gastos actualizados a la tabla de Gastos Mensuales
+                        for match in matches:
+                            f_str = match[0]
+                            m_val = float(match[1].replace('.', '').replace(',', ''))
+                            v_abo += m_val
+                            conn.execute(text("""
+                                INSERT INTO public.gastos_mensuales (fecha, concepto, monto, categoria)
+                                VALUES (:f, :c, :m, 'Pago Deuda/Terceros');
+                            """), {"f": f_str, "c": c_base, "m": -abs(m_val)})
+                            
+                        v_est = "Saldada" if v_abo >= v_tot else "Pendiente"
                         
                         if pd.notna(r['id']):
                             conn.execute(text("""
                                 UPDATE public.cuentas_por_pagar 
                                 SET mes_origen = :mes, concepto = :concepto, monto_total = :tot, monto_abonado = :abo, estado = :est, historial_pagos = :hist
                                 WHERE id = :id;
-                            """), {"mes": str(r['mes_origen']), "concepto": str(r['concepto']), "tot": v_tot, "abo": v_abo, "est": str(r['estado']), "hist": v_hist, "id": int(r['id'])})
+                            """), {"mes": str(r['mes_origen']), "concepto": str(r['concepto']), "tot": v_tot, "abo": v_abo, "est": v_est, "hist": v_hist, "id": int(r['id'])})
                         else:
                             conn.execute(text("""
                                 INSERT INTO public.cuentas_por_pagar (mes_origen, concepto, monto_total, monto_abonado, estado, historial_pagos)
                                 VALUES (:mes, :concepto, :tot, :abo, :est, :hist);
-                            """), {"mes": str(r['mes_origen']), "concepto": str(r['concepto']), "tot": v_tot, "abo": v_abo, "est": str(r['estado']), "hist": v_hist})
+                            """), {"mes": str(r['mes_origen']), "concepto": str(r['concepto']), "tot": v_tot, "abo": v_abo, "est": v_est, "hist": v_hist})
                 
                 st.cache_data.clear()
-                st.success("✅ Cambios guardados correctamente.")
+                st.success("✅ Cambios guardados correctamente y sincronizados con Gastos Mensuales.")
                 st.rerun()
