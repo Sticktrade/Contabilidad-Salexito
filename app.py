@@ -1178,6 +1178,7 @@ with tabs[5]:
             st.cache_data.clear()
             st.success("✅ ¡Cierres de caja e ingresos actualizados correctamente!")
             st.rerun()
+            
 with tabs[6]:
     st.subheader("📓 Control de Cuentas por Pagar (Deudas)")
     st.write("Registra lo que quedaste debiendo de meses anteriores y realiza abonos.")
@@ -1196,10 +1197,12 @@ with tabs[6]:
             if st.form_submit_button("Guardar Deuda", type="primary"):
                 if concepto_deuda and monto_total_deuda > 0:
                     with engine.begin() as conn:
+                        if db_type == "postgres":
+                            conn.execute(text("SET search_path TO public;"))
                         conn.execute(text("""
-                            INSERT INTO cuentas_por_pagar (mes_origen, concepto, monto_total, monto_abonado, estado)
+                            INSERT INTO public.cuentas_por_pagar (mes_origen, concepto, monto_total, monto_abonado, estado)
                             VALUES (:mes, :concepto, :monto, 0, 'Pendiente')
-                        """), {"mes": mes_origen, "concepto": concepto_deuda.upper(), "monto": monto_total_deuda})
+                        """), {"mes": str(mes_origen), "concepto": str(concepto_deuda).upper(), "monto": float(monto_total_deuda)})
                     st.success("Deuda registrada correctamente.")
                     st.rerun()
 
@@ -1213,37 +1216,47 @@ with tabs[6]:
         if not df_pendientes.empty:
             st.markdown("##### ⏳ Deudas Pendientes")
             
-            # Selector para hacer abonos
-            deuda_sel = st.selectbox("Selecciona una deuda para abonar:", df_pendientes.apply(lambda r: f"[{r['mes_origen']}] {r['concepto']} - Falta: ${r['monto_total'] - r['monto_abonado']:,.0f}", axis=1).tolist())
-            idx_sel = df_pendientes.index[df_pendientes.apply(lambda r: f"[{r['mes_origen']}] {r['concepto']} - Falta: ${r['monto_total'] - r['monto_abonado']:,.0f}", axis=1) == deuda_sel].tolist()[0]
+            deuda_sel = st.selectbox("Selecciona una deuda para abonar:", df_pendientes.apply(lambda r: f"[{r['mes_origen']}] {r['concepto']} - Falta: ${float(r['monto_total']) - float(r['monto_abonado']):,.0f}", axis=1).tolist())
+            idx_sel = df_pendientes.index[df_pendientes.apply(lambda r: f"[{r['mes_origen']}] {r['concepto']} - Falta: ${float(r['monto_total']) - float(r['monto_abonado']):,.0f}", axis=1) == deuda_sel].tolist()[0]
             deuda_actual = df_pendientes.loc[idx_sel]
 
             col_ab1, col_ab2 = st.columns([1, 2])
             with col_ab1:
-                monto_abono = st.number_input("Monto a abonar HOY ($):", min_value=0.0, max_value=float(deuda_actual['monto_total'] - deuda_actual['monto_abonado']), step=1000.0)
+                max_abonar = float(deuda_actual['monto_total']) - float(deuda_actual['monto_abonado'])
+                monto_abono = st.number_input("Monto a abonar HOY ($):", min_value=0.0, max_value=max_abonar, step=1000.0)
                 fecha_abono = st.date_input("Fecha del abono (Salida de caja):", value=date.today())
             
             with col_ab2:
-                st.info(f"**Deuda Total:** ${deuda_actual['monto_total']:,.0f} | **Abonado hasta ahora:** ${deuda_actual['monto_abonado']:,.0f}")
+                st.info(f"**Deuda Total:** ${float(deuda_actual['monto_total']):,.0f} | **Abonado hasta ahora:** ${float(deuda_actual['monto_abonado']):,.0f}")
                 if st.button("💸 Registrar Abono", type="primary"):
                     if monto_abono > 0:
-                        nuevo_abonado = deuda_actual['monto_abonado'] + monto_abono
-                        nuevo_estado = 'Saldada' if nuevo_abonado >= deuda_actual['monto_total'] else 'Pendiente'
+                        # Casting estricto a tipos nativos de Python para evitar choque con psycopg2
+                        nuevo_abonado = float(deuda_actual['monto_abonado']) + float(monto_abono)
+                        deuda_total = float(deuda_actual['monto_total'])
+                        nuevo_estado = str('Saldada' if nuevo_abonado >= deuda_total else 'Pendiente')
+                        deuda_id = int(deuda_actual['id'])
+                        
+                        concepto_gasto = str(f"Abono a deuda: {deuda_actual['concepto']} (Origen: {deuda_actual['mes_origen']})")
+                        monto_gasto_insert = float(-abs(monto_abono))
+                        fecha_str = str(fecha_abono.strftime("%Y-%m-%d"))
                         
                         with engine.begin() as conn:
-                            # 1. Actualizar la deuda (Forzando esquema public)
+                            # Reiniciar el contexto del esquema para conexiones del Pooler de Supabase
+                            if db_type == "postgres":
+                                conn.execute(text("SET search_path TO public;"))
+                                
+                            # 1. Actualizar la deuda
                             conn.execute(text("""
                                 UPDATE public.cuentas_por_pagar 
                                 SET monto_abonado = :abonado, estado = :estado 
                                 WHERE id = :id
-                            """), {"abonado": nuevo_abonado, "estado": nuevo_estado, "id": int(deuda_actual['id'])})
+                            """), {"abonado": nuevo_abonado, "estado": nuevo_estado, "id": deuda_id})
                             
-                            # 2. Registrar el abono como gasto EN EL MES ACTUAL (Forzando esquema public)
-                            concepto_gasto = f"Abono a deuda: {deuda_actual['concepto']} (Origen: {deuda_actual['mes_origen']})"
+                            # 2. Registrar el abono como gasto EN EL MES ACTUAL automáticamente
                             conn.execute(text("""
                                 INSERT INTO public.gastos_mensuales (fecha, concepto, monto, categoria)
                                 VALUES (:fecha, :concepto, :monto, 'Pago Deuda/Terceros');
-                            """), {"fecha": fecha_abono.strftime("%Y-%m-%d"), "concepto": concepto_gasto, "monto": -abs(monto_abono)})
+                            """), {"fecha": fecha_str, "concepto": concepto_gasto, "monto": monto_gasto_insert})
                             
                         st.cache_data.clear()
                         st.success("Abono registrado. Se ha añadido automáticamente como gasto al mes actual.")
