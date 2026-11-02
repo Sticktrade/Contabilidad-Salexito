@@ -1206,7 +1206,7 @@ with tabs[6]:
     # 2. Visualización y Abonos
     st.divider()
     with engine.connect() as conn:
-        df_deudas = pd.read_sql_query(text("SELECT * FROM cuentas_por_pagar ORDER BY id ASC"), conn)
+        df_deudas = pd.read_sql_query(text("SELECT * FROM public.cuentas_por_pagar ORDER BY id ASC"), conn)
     
     if not df_deudas.empty:
         df_pendientes = df_deudas[df_deudas['estado'] != 'Saldada']
@@ -1231,17 +1231,17 @@ with tabs[6]:
                         nuevo_estado = 'Saldada' if nuevo_abonado >= deuda_actual['monto_total'] else 'Pendiente'
                         
                         with engine.begin() as conn:
-                            # 1. Actualizar la deuda
+                            # 1. Actualizar la deuda (Forzando esquema public)
                             conn.execute(text("""
-                                UPDATE cuentas_por_pagar 
+                                UPDATE public.cuentas_por_pagar 
                                 SET monto_abonado = :abonado, estado = :estado 
                                 WHERE id = :id
                             """), {"abonado": nuevo_abonado, "estado": nuevo_estado, "id": int(deuda_actual['id'])})
                             
-                            # 2. Registrar el abono como gasto EN EL MES ACTUAL automáticamente
+                            # 2. Registrar el abono como gasto EN EL MES ACTUAL (Forzando esquema public)
                             concepto_gasto = f"Abono a deuda: {deuda_actual['concepto']} (Origen: {deuda_actual['mes_origen']})"
                             conn.execute(text("""
-                                INSERT INTO gastos_mensuales (fecha, concepto, monto, categoria)
+                                INSERT INTO public.gastos_mensuales (fecha, concepto, monto, categoria)
                                 VALUES (:fecha, :concepto, :monto, 'Pago Deuda/Terceros');
                             """), {"fecha": fecha_abono.strftime("%Y-%m-%d"), "concepto": concepto_gasto, "monto": -abs(monto_abono)})
                             
