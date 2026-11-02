@@ -605,7 +605,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-tabs = st.tabs(["📊 Recuento Mensual", "📥 Cargar Caja Diaria", "💸 Gastos Mensuales", "📋 Presupuestos", "📈 Métricas", "⚙️ Edición / Histórico"])
+tabs = st.tabs(["📊 Recuento Mensual", "📥 Cargar Caja Diaria", "💸 Gastos Mensuales", "📋 Presupuestos", "📈 Métricas", "⚙️ Edición / Histórico", "📓 Cuentas por Pagar"])
 
 with tabs[1]:
     st.subheader("📥 Cargar reporte diario enviado desde el local")
@@ -1178,3 +1178,76 @@ with tabs[5]:
             st.cache_data.clear()
             st.success("✅ ¡Cierres de caja e ingresos actualizados correctamente!")
             st.rerun()
+with tabs[6]:
+    st.subheader("📓 Control de Cuentas por Pagar (Deudas)")
+    st.write("Registra lo que quedaste debiendo de meses anteriores y realiza abonos.")
+
+    # 1. Formulario para registrar nueva deuda
+    with st.expander("➕ Registrar Nueva Deuda"):
+        with st.form("form_nueva_deuda", clear_on_submit=True):
+            c_d1, c_d2, c_d3 = st.columns(3)
+            with c_d1:
+                mes_origen = st.text_input("Mes de Origen (Ej: 2026-08):", value=date.today().strftime('%Y-%m'))
+            with c_d2:
+                concepto_deuda = st.text_input("Concepto / A quién se le debe:")
+            with c_d3:
+                monto_total_deuda = st.number_input("Monto Total ($):", min_value=0.0, step=1000.0)
+            
+            if st.form_submit_button("Guardar Deuda", type="primary"):
+                if concepto_deuda and monto_total_deuda > 0:
+                    with engine.begin() as conn:
+                        conn.execute(text("""
+                            INSERT INTO cuentas_por_pagar (mes_origen, concepto, monto_total, monto_abonado, estado)
+                            VALUES (:mes, :concepto, :monto, 0, 'Pendiente')
+                        """), {"mes": mes_origen, "concepto": concepto_deuda.upper(), "monto": monto_total_deuda})
+                    st.success("Deuda registrada correctamente.")
+                    st.rerun()
+
+    # 2. Visualización y Abonos
+    st.divider()
+    with engine.connect() as conn:
+        df_deudas = pd.read_sql_query(text("SELECT * FROM cuentas_por_pagar ORDER BY id ASC"), conn)
+    
+    if not df_deudas.empty:
+        df_pendientes = df_deudas[df_deudas['estado'] != 'Saldada']
+        if not df_pendientes.empty:
+            st.markdown("##### ⏳ Deudas Pendientes")
+            
+            # Selector para hacer abonos
+            deuda_sel = st.selectbox("Selecciona una deuda para abonar:", df_pendientes.apply(lambda r: f"[{r['mes_origen']}] {r['concepto']} - Falta: ${r['monto_total'] - r['monto_abonado']:,.0f}", axis=1).tolist())
+            idx_sel = df_pendientes.index[df_pendientes.apply(lambda r: f"[{r['mes_origen']}] {r['concepto']} - Falta: ${r['monto_total'] - r['monto_abonado']:,.0f}", axis=1) == deuda_sel].tolist()[0]
+            deuda_actual = df_pendientes.loc[idx_sel]
+
+            col_ab1, col_ab2 = st.columns([1, 2])
+            with col_ab1:
+                monto_abono = st.number_input("Monto a abonar HOY ($):", min_value=0.0, max_value=float(deuda_actual['monto_total'] - deuda_actual['monto_abonado']), step=1000.0)
+                fecha_abono = st.date_input("Fecha del abono (Salida de caja):", value=date.today())
+            
+            with col_ab2:
+                st.info(f"**Deuda Total:** ${deuda_actual['monto_total']:,.0f} | **Abonado hasta ahora:** ${deuda_actual['monto_abonado']:,.0f}")
+                if st.button("💸 Registrar Abono", type="primary"):
+                    if monto_abono > 0:
+                        nuevo_abonado = deuda_actual['monto_abonado'] + monto_abono
+                        nuevo_estado = 'Saldada' if nuevo_abonado >= deuda_actual['monto_total'] else 'Pendiente'
+                        
+                        with engine.begin() as conn:
+                            # 1. Actualizar la deuda
+                            conn.execute(text("""
+                                UPDATE cuentas_por_pagar 
+                                SET monto_abonado = :abonado, estado = :estado 
+                                WHERE id = :id
+                            """), {"abonado": nuevo_abonado, "estado": nuevo_estado, "id": int(deuda_actual['id'])})
+                            
+                            # 2. Registrar el abono como gasto EN EL MES ACTUAL automáticamente
+                            concepto_gasto = f"Abono a deuda: {deuda_actual['concepto']} (Origen: {deuda_actual['mes_origen']})"
+                            conn.execute(text("""
+                                INSERT INTO gastos_mensuales (fecha, concepto, monto, categoria)
+                                VALUES (:fecha, :concepto, :monto, 'Pago Deuda/Terceros');
+                            """), {"fecha": fecha_abono.strftime("%Y-%m-%d"), "concepto": concepto_gasto, "monto": -abs(monto_abono)})
+                            
+                        st.cache_data.clear()
+                        st.success("Abono registrado. Se ha añadido automáticamente como gasto al mes actual.")
+                        st.rerun()
+                        
+        st.markdown("##### 📊 Resumen Histórico de Deudas")
+        st.dataframe(df_deudas, use_container_width=True, hide_index=True)
