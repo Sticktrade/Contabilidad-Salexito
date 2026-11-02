@@ -528,6 +528,62 @@ def generate_pdf_presupuesto(mes_nombre, df_presupuesto, total_inicial, total_fi
     doc.build(story)
     buffer.seek(0)
     return buffer.getvalue()
+    
+@st.cache_data(ttl=300)
+def generate_pdf_deudas(df_deudas):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
+    story = []
+    
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('DocTitle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=18, textColor=colors.HexColor('#0369a1'), spaceAfter=4)
+    subtitle_style = ParagraphStyle('DocSubtitle', parent=styles['Normal'], fontName='Helvetica', fontSize=10, textColor=colors.HexColor('#047857'), spaceAfter=14)
+    h2_style = ParagraphStyle('SectionHeading', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=12, textColor=colors.HexColor('#0f172a'), spaceBefore=10, spaceAfter=6)
+    cell_style = ParagraphStyle('Cell', parent=styles['Normal'], fontName='Helvetica', fontSize=9, textColor=colors.HexColor('#1e293b'))
+    cell_bold = ParagraphStyle('CellB', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, textColor=colors.HexColor('#0f172a'))
+    header_cell = ParagraphStyle('HCell', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, textColor=colors.white)
+
+    story.append(Paragraph("Reporte de Cuentas por Pagar (Deudas)", title_style))
+    story.append(Paragraph("Papelería — Histórico y Saldos Pendientes", subtitle_style))
+    story.append(Spacer(1, 10))
+
+    story.append(Paragraph("Detalle de Obligaciones", h2_style))
+    table_data = [[
+        Paragraph("Mes", header_cell), 
+        Paragraph("Concepto", header_cell), 
+        Paragraph("Total", header_cell), 
+        Paragraph("Abonado", header_cell), 
+        Paragraph("Pendiente", header_cell), 
+        Paragraph("Estado", header_cell)
+    ]]
+    
+    for _, r in df_deudas.iterrows():
+        total = float(r['monto_total'])
+        abonado = float(r['monto_abonado'])
+        pendiente = total - abonado
+        
+        table_data.append([
+            Paragraph(str(r['mes_origen']), cell_style),
+            Paragraph(str(r['concepto']), cell_style),
+            Paragraph(f"${total:,.0f}".replace(",", "."), cell_style),
+            Paragraph(f"${abonado:,.0f}".replace(",", "."), cell_style),
+            Paragraph(f"${pendiente:,.0f}".replace(",", "."), cell_bold),
+            Paragraph(str(r['estado']), cell_style)
+        ])
+        
+    t_deudas = Table(table_data, colWidths=[55, 145, 80, 80, 80, 65])
+    t_deudas.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#0284c7')),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('ROWBACKGROUNDS', (0,1), (-1,-2), [colors.white, colors.HexColor('#f8fafc')]),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')),
+    ]))
+    story.append(t_deudas)
+    
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.getvalue()
 
 # -----------------------------------------------------------------------------
 # PARSER EXCEL
@@ -1192,7 +1248,7 @@ with tabs[6]:
             with c_d2:
                 concepto_deuda = st.text_input("Concepto / A quién se le debe:")
             with c_d3:
-                monto_total_deuda = st.number_input("Monto Total ($):", min_value=0.0, step=1000.0)
+                monto_total_deuda = st.number_input("Monto Total ($):", min_value=0.0, step=1000.0, format="%d")
             
             if st.form_submit_button("Guardar Deuda", type="primary"):
                 if concepto_deuda and monto_total_deuda > 0:
@@ -1216,21 +1272,30 @@ with tabs[6]:
         if not df_pendientes.empty:
             st.markdown("##### ⏳ Deudas Pendientes")
             
-            deuda_sel = st.selectbox("Selecciona una deuda para abonar:", df_pendientes.apply(lambda r: f"[{r['mes_origen']}] {r['concepto']} - Falta: ${float(r['monto_total']) - float(r['monto_abonado']):,.0f}", axis=1).tolist())
-            idx_sel = df_pendientes.index[df_pendientes.apply(lambda r: f"[{r['mes_origen']}] {r['concepto']} - Falta: ${float(r['monto_total']) - float(r['monto_abonado']):,.0f}", axis=1) == deuda_sel].tolist()[0]
-            deuda_actual = df_pendientes.loc[idx_sel]
+            # Selector formateado
+            opciones_selector = []
+            for _, r in df_pendientes.iterrows():
+                falta = float(r['monto_total']) - float(r['monto_abonado'])
+                falta_str = f"${falta:,.0f}".replace(",", ".")
+                opciones_selector.append(f"[{r['mes_origen']}] {r['concepto']} - Falta: {falta_str}")
+                
+            deuda_sel = st.selectbox("Selecciona una deuda para abonar:", opciones_selector)
+            idx_sel = opciones_selector.index(deuda_sel)
+            deuda_actual = df_pendientes.iloc[idx_sel]
 
             col_ab1, col_ab2 = st.columns([1, 2])
             with col_ab1:
                 max_abonar = float(deuda_actual['monto_total']) - float(deuda_actual['monto_abonado'])
-                monto_abono = st.number_input("Monto a abonar HOY ($):", min_value=0.0, max_value=max_abonar, step=1000.0)
+                monto_abono = st.number_input("Monto a abonar HOY ($):", min_value=0.0, max_value=max_abonar, step=1000.0, format="%d")
                 fecha_abono = st.date_input("Fecha del abono (Salida de caja):", value=date.today())
             
             with col_ab2:
-                st.info(f"**Deuda Total:** ${float(deuda_actual['monto_total']):,.0f} | **Abonado hasta ahora:** ${float(deuda_actual['monto_abonado']):,.0f}")
+                tot_str = f"${float(deuda_actual['monto_total']):,.0f}".replace(",", ".")
+                ab_str = f"${float(deuda_actual['monto_abonado']):,.0f}".replace(",", ".")
+                st.info(f"**Deuda Total:** {tot_str} | **Abonado hasta ahora:** {ab_str}")
+                
                 if st.button("💸 Registrar Abono", type="primary"):
                     if monto_abono > 0:
-                        # Casting estricto a tipos nativos de Python para evitar choque con psycopg2
                         nuevo_abonado = float(deuda_actual['monto_abonado']) + float(monto_abono)
                         deuda_total = float(deuda_actual['monto_total'])
                         nuevo_estado = str('Saldada' if nuevo_abonado >= deuda_total else 'Pendiente')
@@ -1241,18 +1306,15 @@ with tabs[6]:
                         fecha_str = str(fecha_abono.strftime("%Y-%m-%d"))
                         
                         with engine.begin() as conn:
-                            # Reiniciar el contexto del esquema para conexiones del Pooler de Supabase
                             if db_type == "postgres":
                                 conn.execute(text("SET search_path TO public;"))
                                 
-                            # 1. Actualizar la deuda
                             conn.execute(text("""
                                 UPDATE public.cuentas_por_pagar 
                                 SET monto_abonado = :abonado, estado = :estado 
                                 WHERE id = :id
                             """), {"abonado": nuevo_abonado, "estado": nuevo_estado, "id": deuda_id})
                             
-                            # 2. Registrar el abono como gasto EN EL MES ACTUAL automáticamente
                             conn.execute(text("""
                                 INSERT INTO public.gastos_mensuales (fecha, concepto, monto, categoria)
                                 VALUES (:fecha, :concepto, :monto, 'Pago Deuda/Terceros');
@@ -1263,4 +1325,50 @@ with tabs[6]:
                         st.rerun()
                         
         st.markdown("##### 📊 Resumen Histórico de Deudas")
-        st.dataframe(df_deudas, use_container_width=True, hide_index=True)
+        
+        # Generación de Tabla HTML Bonita
+        html_deudas = """<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; background-color:#ffffff; color:#0f172a; border:1px solid #cbd5e1; font-family:sans-serif; border-radius:8px;">
+          <thead><tr style="background-color:#0284c7; color:#ffffff; font-weight:bold; text-align:left;">
+            <th style="padding:10px; border:1px solid #cbd5e1;">Mes Origen</th>
+            <th style="padding:10px; border:1px solid #cbd5e1;">Concepto</th>
+            <th style="padding:10px; border:1px solid #cbd5e1; text-align:right;">Monto Total ($)</th>
+            <th style="padding:10px; border:1px solid #cbd5e1; text-align:right;">Abonado ($)</th>
+            <th style="padding:10px; border:1px solid #cbd5e1; text-align:right;">Pendiente ($)</th>
+            <th style="padding:10px; border:1px solid #cbd5e1; text-align:center;">Estado</th>
+          </tr></thead><tbody>"""
+          
+        for idx, r in df_deudas.iterrows():
+            bg = "#ffffff" if idx % 2 == 0 else "#f8fafc"
+            tot = float(r['monto_total'])
+            abo = float(r['monto_abonado'])
+            pen = tot - abo
+            
+            tot_f = f"${tot:,.0f}".replace(",", ".")
+            abo_f = f"${abo:,.0f}".replace(",", ".")
+            pen_f = f"${pen:,.0f}".replace(",", ".")
+            
+            estado_color = "#10b981" if r['estado'] == 'Saldada' else "#e11d48"
+            estado_badge = f"<span style='background-color:{estado_color}; color:white; padding:4px 8px; border-radius:12px; font-size:12px;'>{r['estado']}</span>"
+            
+            html_deudas += f"""<tr style="background-color:{bg}; color:#0f172a;">
+              <td style="padding:8px; border:1px solid #e2e8f0; font-weight:500;">{r['mes_origen']}</td>
+              <td style="padding:8px; border:1px solid #e2e8f0;">{r['concepto']}</td>
+              <td style="padding:8px; border:1px solid #e2e8f0; text-align:right;">{tot_f}</td>
+              <td style="padding:8px; border:1px solid #e2e8f0; text-align:right; color:#0369a1;">{abo_f}</td>
+              <td style="padding:8px; border:1px solid #e2e8f0; text-align:right; font-weight:bold; color:#be123c;">{pen_f}</td>
+              <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">{estado_badge}</td>
+            </tr>"""
+            
+        html_deudas += "</tbody></table></div>"
+        st.markdown(html_deudas, unsafe_allow_html=True)
+        
+        # Botón de exportación PDF
+        st.write("")
+        pdf_bytes_deudas = generate_pdf_deudas(df_deudas)
+        st.download_button(
+            label="📄 Exportar Histórico de Deudas a PDF",
+            data=pdf_bytes_deudas,
+            file_name=f"Reporte_Deudas_{date.today().strftime('%Y-%m-%d')}.pdf",
+            mime="application/pdf",
+            type="primary"
+        )
