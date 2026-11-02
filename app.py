@@ -294,7 +294,14 @@ def init_db():
                 """))
     except Exception as ex:
         st.warning(f"Error inicializando tablas: {ex}")
-
+# Añadir columna de fecha de abono si no existe
+    try:
+        with engine.begin() as conn:
+            if db_type == "postgres":
+                conn.execute(text("SET search_path TO public;"))
+            conn.execute(text("ALTER TABLE cuentas_por_pagar ADD COLUMN fecha_ultimo_abono VARCHAR(20);"))
+    except Exception:
+        pass # La columna ya existe
 init_db()
 
 # -----------------------------------------------------------------------------
@@ -1189,6 +1196,32 @@ with tabs[4]:
         fig_curve = px.line(df_mensual_sum, x="mes_año", y="total", markers=True, labels={"mes_año": "Mes", "total": "Facturación Acumulada ($)"}, color_discrete_sequence=['#0284c7'])
         fig_curve.update_layout(plot_bgcolor='white', paper_bgcolor='white', font=dict(color='#0f172a'), yaxis=dict(showgrid=True, gridcolor='#f1f5f9'))
         st.plotly_chart(fig_curve, use_container_width=True)
+        
+        st.divider()
+        st.markdown("#### 3. Estado de Cuentas por Pagar (Deudas)")
+        try:
+            with engine.connect() as conn:
+                df_d = pd.read_sql_query(text("SELECT * FROM public.cuentas_por_pagar WHERE estado != 'Saldada'"), conn)
+            
+            if not df_d.empty:
+                df_d['monto_total'] = df_d['monto_total'].astype(float)
+                df_d['monto_abonado'] = df_d['monto_abonado'].astype(float)
+                df_d['Pendiente'] = df_d['monto_total'] - df_d['monto_abonado']
+                
+                fig_deudas = px.bar(
+                    df_d, 
+                    x="concepto", 
+                    y=["monto_abonado", "Pendiente"], 
+                    title="Deudas Pendientes: Pagado vs Restante",
+                    labels={"value": "Monto ($)", "concepto": "Concepto", "variable": "Estado del Monto"},
+                    color_discrete_map={"monto_abonado": "#10b981", "Pendiente": "#e11d48"}
+                )
+                fig_deudas.update_layout(plot_bgcolor='white', paper_bgcolor='white', font=dict(color='#0f172a'))
+                st.plotly_chart(fig_deudas, use_container_width=True)
+            else:
+                st.info("No hay deudas pendientes registradas.")
+        except Exception as e:
+            st.warning("No se pudo cargar el gráfico de deudas. Asegúrate de registrar una deuda primero.")
 
 with tabs[5]:
     st.subheader("⚙️ Edición Rápida de Cierres Diarios e Ingresos")
@@ -1237,9 +1270,9 @@ with tabs[5]:
             
 with tabs[6]:
     st.subheader("📓 Control de Cuentas por Pagar (Deudas)")
-    st.write("Registra lo que quedaste debiendo de meses anteriores y realiza abonos.")
+    st.write("Registra, abona y edita lo que quedaste debiendo de meses anteriores.")
 
-    # 1. Formulario para registrar nueva deuda
+    # 1. Formulario para registrar nueva deuda (Campos vacíos por defecto)
     with st.expander("➕ Registrar Nueva Deuda"):
         with st.form("form_nueva_deuda", clear_on_submit=True):
             c_d1, c_d2, c_d3 = st.columns(3)
@@ -1248,16 +1281,16 @@ with tabs[6]:
             with c_d2:
                 concepto_deuda = st.text_input("Concepto / A quién se le debe:")
             with c_d3:
-                monto_total_deuda = st.number_input("Monto Total ($):", min_value=0.0, step=1000.0, format="%d")
+                monto_total_deuda = st.number_input("Monto Total ($):", min_value=0.0, step=1000.0, format="%d", value=None)
             
             if st.form_submit_button("Guardar Deuda", type="primary"):
-                if concepto_deuda and monto_total_deuda > 0:
+                if concepto_deuda and monto_total_deuda is not None and monto_total_deuda > 0:
                     with engine.begin() as conn:
                         if db_type == "postgres":
                             conn.execute(text("SET search_path TO public;"))
                         conn.execute(text("""
-                            INSERT INTO public.cuentas_por_pagar (mes_origen, concepto, monto_total, monto_abonado, estado)
-                            VALUES (:mes, :concepto, :monto, 0, 'Pendiente')
+                            INSERT INTO public.cuentas_por_pagar (mes_origen, concepto, monto_total, monto_abonado, estado, fecha_ultimo_abono)
+                            VALUES (:mes, :concepto, :monto, 0, 'Pendiente', NULL)
                         """), {"mes": str(mes_origen), "concepto": str(concepto_deuda).upper(), "monto": float(monto_total_deuda)})
                     st.success("Deuda registrada correctamente.")
                     st.rerun()
@@ -1265,14 +1298,24 @@ with tabs[6]:
     # 2. Visualización y Abonos
     st.divider()
     with engine.connect() as conn:
-        df_deudas = pd.read_sql_query(text("SELECT * FROM public.cuentas_por_pagar ORDER BY id ASC"), conn)
+        try:
+            df_deudas = pd.read_sql_query(text("SELECT * FROM public.cuentas_por_pagar ORDER BY id ASC"), conn)
+        except Exception:
+            df_deudas = pd.DataFrame()
     
     if not df_deudas.empty:
-        df_pendientes = df_deudas[df_deudas['estado'] != 'Saldada']
+        df_pendientes = df_deudas[df_deudas['estado'] != 'Saldada'].copy()
+        
+        # Totalizador de deuda global pendiente
+        tot_deuda_global = df_pendientes['monto_total'].astype(float).sum() if not df_pendientes.empty else 0.0
+        tot_abonado_global = df_pendientes['monto_abonado'].astype(float).sum() if not df_pendientes.empty else 0.0
+        tot_pendiente_global = tot_deuda_global - tot_abonado_global
+        
+        st.markdown(f'<div class="metric-card-amber" style="margin-bottom: 20px;"><div class="metric-card-title">⚠️ Total Deuda Pendiente Acumulada (Todas las cuentas)</div><div class="metric-card-val" style="color:#b91c1c !important;">${tot_pendiente_global:,.0f}</div></div>', unsafe_allow_html=True)
+        
         if not df_pendientes.empty:
-            st.markdown("##### ⏳ Deudas Pendientes")
+            st.markdown("##### ⏳ Registrar Abono a Deuda")
             
-            # Selector formateado
             opciones_selector = []
             for _, r in df_pendientes.iterrows():
                 falta = float(r['monto_total']) - float(r['monto_abonado'])
@@ -1286,24 +1329,32 @@ with tabs[6]:
             col_ab1, col_ab2 = st.columns([1, 2])
             with col_ab1:
                 max_abonar = float(deuda_actual['monto_total']) - float(deuda_actual['monto_abonado'])
-                monto_abono = st.number_input("Monto a abonar HOY ($):", min_value=0.0, max_value=max_abonar, step=1000.0, format="%d")
+                monto_abono = st.number_input("Monto a abonar HOY ($):", min_value=0.0, max_value=max_abonar, step=1000.0, format="%d", value=None)
                 fecha_abono = st.date_input("Fecha del abono (Salida de caja):", value=date.today())
             
             with col_ab2:
+                # Recuadro azul rediseñado con HTML nativo para coincidir con la fuente y estilo
                 tot_str = f"${float(deuda_actual['monto_total']):,.0f}".replace(",", ".")
                 ab_str = f"${float(deuda_actual['monto_abonado']):,.0f}".replace(",", ".")
-                st.info(f"**Deuda Total:** {tot_str} | **Abonado hasta ahora:** {ab_str}")
+                
+                st.write("") # Espaciador
+                html_info = f"""
+                <div style="background-color: #eff6ff; padding: 12px; border-radius: 8px; border: 1px solid #bfdbfe; color: #1e3a8a; font-family: sans-serif; margin-bottom: 15px;">
+                    <span style="font-size: 15px;"><b>Deuda Total:</b> {tot_str} &nbsp;|&nbsp; <b>Abonado hasta ahora:</b> {ab_str}</span>
+                </div>
+                """
+                st.markdown(html_info, unsafe_allow_html=True)
                 
                 if st.button("💸 Registrar Abono", type="primary"):
-                    if monto_abono > 0:
+                    if monto_abono is not None and monto_abono > 0:
                         nuevo_abonado = float(deuda_actual['monto_abonado']) + float(monto_abono)
                         deuda_total = float(deuda_actual['monto_total'])
                         nuevo_estado = str('Saldada' if nuevo_abonado >= deuda_total else 'Pendiente')
                         deuda_id = int(deuda_actual['id'])
+                        fecha_str = str(fecha_abono.strftime("%Y-%m-%d"))
                         
                         concepto_gasto = str(f"Abono a deuda: {deuda_actual['concepto']} (Origen: {deuda_actual['mes_origen']})")
                         monto_gasto_insert = float(-abs(monto_abono))
-                        fecha_str = str(fecha_abono.strftime("%Y-%m-%d"))
                         
                         with engine.begin() as conn:
                             if db_type == "postgres":
@@ -1311,9 +1362,9 @@ with tabs[6]:
                                 
                             conn.execute(text("""
                                 UPDATE public.cuentas_por_pagar 
-                                SET monto_abonado = :abonado, estado = :estado 
+                                SET monto_abonado = :abonado, estado = :estado, fecha_ultimo_abono = :fec 
                                 WHERE id = :id
-                            """), {"abonado": nuevo_abonado, "estado": nuevo_estado, "id": deuda_id})
+                            """), {"abonado": nuevo_abonado, "estado": nuevo_estado, "fec": fecha_str, "id": deuda_id})
                             
                             conn.execute(text("""
                                 INSERT INTO public.gastos_mensuales (fecha, concepto, monto, categoria)
@@ -1321,54 +1372,77 @@ with tabs[6]:
                             """), {"fecha": fecha_str, "concepto": concepto_gasto, "monto": monto_gasto_insert})
                             
                         st.cache_data.clear()
-                        st.success("Abono registrado. Se ha añadido automáticamente como gasto al mes actual.")
+                        st.success("Abono registrado exitosamente.")
                         st.rerun()
                         
-        st.markdown("##### 📊 Resumen Histórico de Deudas")
+        st.divider()
+        st.markdown("##### 📊 Resumen Histórico y Edición Libre de Deudas")
+        st.write("Si te equivocaste al registrar una deuda, edita los montos directamente en la tabla o selecciona la fila y bórrala presionando 'Suprimir'. Al terminar, presiona Guardar Cambios.")
         
-        # Generación de Tabla HTML Bonita
-        html_deudas = """<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; background-color:#ffffff; color:#0f172a; border:1px solid #cbd5e1; font-family:sans-serif; border-radius:8px;">
-          <thead><tr style="background-color:#0284c7; color:#ffffff; font-weight:bold; text-align:left;">
-            <th style="padding:10px; border:1px solid #cbd5e1;">Mes Origen</th>
-            <th style="padding:10px; border:1px solid #cbd5e1;">Concepto</th>
-            <th style="padding:10px; border:1px solid #cbd5e1; text-align:right;">Monto Total ($)</th>
-            <th style="padding:10px; border:1px solid #cbd5e1; text-align:right;">Abonado ($)</th>
-            <th style="padding:10px; border:1px solid #cbd5e1; text-align:right;">Pendiente ($)</th>
-            <th style="padding:10px; border:1px solid #cbd5e1; text-align:center;">Estado</th>
-          </tr></thead><tbody>"""
-          
-        for idx, r in df_deudas.iterrows():
-            bg = "#ffffff" if idx % 2 == 0 else "#f8fafc"
-            tot = float(r['monto_total'])
-            abo = float(r['monto_abonado'])
-            pen = tot - abo
+        # Asegurar que la columna fecha_ultimo_abono existe en el dataframe (por si es tabla vieja)
+        if 'fecha_ultimo_abono' not in df_deudas.columns:
+            df_deudas['fecha_ultimo_abono'] = ""
             
-            tot_f = f"${tot:,.0f}".replace(",", ".")
-            abo_f = f"${abo:,.0f}".replace(",", ".")
-            pen_f = f"${pen:,.0f}".replace(",", ".")
-            
-            estado_color = "#10b981" if r['estado'] == 'Saldada' else "#e11d48"
-            estado_badge = f"<span style='background-color:{estado_color}; color:white; padding:4px 8px; border-radius:12px; font-size:12px;'>{r['estado']}</span>"
-            
-            html_deudas += f"""<tr style="background-color:{bg}; color:#0f172a;">
-              <td style="padding:8px; border:1px solid #e2e8f0; font-weight:500;">{r['mes_origen']}</td>
-              <td style="padding:8px; border:1px solid #e2e8f0;">{r['concepto']}</td>
-              <td style="padding:8px; border:1px solid #e2e8f0; text-align:right;">{tot_f}</td>
-              <td style="padding:8px; border:1px solid #e2e8f0; text-align:right; color:#0369a1;">{abo_f}</td>
-              <td style="padding:8px; border:1px solid #e2e8f0; text-align:right; font-weight:bold; color:#be123c;">{pen_f}</td>
-              <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">{estado_badge}</td>
-            </tr>"""
-            
-        html_deudas += "</tbody></table></div>"
-        st.markdown(html_deudas, unsafe_allow_html=True)
-        
-        # Botón de exportación PDF
-        st.write("")
-        pdf_bytes_deudas = generate_pdf_deudas(df_deudas)
-        st.download_button(
-            label="📄 Exportar Histórico de Deudas a PDF",
-            data=pdf_bytes_deudas,
-            file_name=f"Reporte_Deudas_{date.today().strftime('%Y-%m-%d')}.pdf",
-            mime="application/pdf",
-            type="primary"
+        df_editor_deudas = st.data_editor(
+            df_deudas[['id', 'mes_origen', 'concepto', 'monto_total', 'monto_abonado', 'fecha_ultimo_abono', 'estado']],
+            num_rows="dynamic",
+            use_container_width=True,
+            column_config={
+                "id": st.column_config.NumberColumn("ID", disabled=True),
+                "mes_origen": st.column_config.TextColumn("Mes Origen", required=True),
+                "concepto": st.column_config.TextColumn("Concepto", required=True),
+                "monto_total": st.column_config.NumberColumn("Total ($)", format="$%d", required=True),
+                "monto_abonado": st.column_config.NumberColumn("Abonado ($)", format="$%d", required=True),
+                "fecha_ultimo_abono": st.column_config.TextColumn("Fecha Últ. Abono"),
+                "estado": st.column_config.SelectboxColumn("Estado", options=["Pendiente", "Saldada"], required=True)
+            },
+            key="tabla_edicion_deudas"
         )
+        
+        c_ed1, c_ed2 = st.columns([2, 2])
+        with c_ed1:
+            if st.button("💾 Guardar Cambios en Tabla", type="primary"):
+                original_ids = df_deudas['id'].dropna().tolist()
+                edited_ids = df_editor_deudas['id'].dropna().tolist()
+                deudas_eliminadas = list(set(original_ids) - set(edited_ids))
+                
+                with engine.begin() as conn:
+                    if db_type == "postgres":
+                        conn.execute(text("SET search_path TO public;"))
+                    
+                    # Eliminar deudas borradas por el usuario
+                    for d_id in deudas_eliminadas:
+                        conn.execute(text("DELETE FROM public.cuentas_por_pagar WHERE id = :id;"), {"id": int(d_id)})
+                        
+                    # Actualizar o insertar filas
+                    for _, r in df_editor_deudas.iterrows():
+                        v_tot = float(r['monto_total']) if pd.notna(r['monto_total']) else 0.0
+                        v_abo = float(r['monto_abonado']) if pd.notna(r['monto_abonado']) else 0.0
+                        v_fec = str(r['fecha_ultimo_abono']) if pd.notna(r['fecha_ultimo_abono']) else None
+                        
+                        if pd.notna(r['id']):
+                            conn.execute(text("""
+                                UPDATE public.cuentas_por_pagar 
+                                SET mes_origen = :mes, concepto = :concepto, monto_total = :tot, monto_abonado = :abo, estado = :est, fecha_ultimo_abono = :fec
+                                WHERE id = :id;
+                            """), {"mes": str(r['mes_origen']), "concepto": str(r['concepto']), "tot": v_tot, "abo": v_abo, "est": str(r['estado']), "fec": v_fec, "id": int(r['id'])})
+                        else:
+                            conn.execute(text("""
+                                INSERT INTO public.cuentas_por_pagar (mes_origen, concepto, monto_total, monto_abonado, estado, fecha_ultimo_abono)
+                                VALUES (:mes, :concepto, :tot, :abo, :est, :fec);
+                            """), {"mes": str(r['mes_origen']), "concepto": str(r['concepto']), "tot": v_tot, "abo": v_abo, "est": str(r['estado']), "fec": v_fec})
+                
+                st.cache_data.clear()
+                st.success("✅ Cambios guardados correctamente.")
+                st.rerun()
+                
+        with c_ed2:
+            st.write("")
+            pdf_bytes_deudas = generate_pdf_deudas(df_editor_deudas)
+            st.download_button(
+                label="📄 Exportar Histórico a PDF",
+                data=pdf_bytes_deudas,
+                file_name=f"Reporte_Deudas_{date.today().strftime('%Y-%m-%d')}.pdf",
+                mime="application/pdf",
+                type="primary"
+            )
