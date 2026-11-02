@@ -230,6 +230,16 @@ def init_db():
                     );
                 """))
                 conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS cuentas_por_pagar (
+                        id SERIAL PRIMARY KEY,
+                        mes_origen VARCHAR(20),
+                        concepto TEXT,
+                        monto_total FLOAT,
+                        monto_abonado FLOAT DEFAULT 0,
+                        estado VARCHAR(20) DEFAULT 'Pendiente'
+                    );
+                """))
+                conn.execute(text("""
                     CREATE TABLE IF NOT EXISTS transacciones_diarias (
                         id SERIAL PRIMARY KEY,
                         fecha VARCHAR(20), concepto TEXT, cantidad INT, codigo INT, ingreso FLOAT, gastos FLOAT, saldo FLOAT
@@ -252,6 +262,16 @@ def init_db():
                     CREATE TABLE IF NOT EXISTS cierres_diarios (
                         fecha TEXT PRIMARY KEY,
                         efectivo REAL, nequi REAL, daviplata REAL, banco REAL, total REAL, observaciones TEXT
+                    );
+                """))
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS cuentas_por_pagar (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        mes_origen TEXT,
+                        concepto TEXT,
+                        monto_total REAL,
+                        monto_abonado REAL DEFAULT 0,
+                        estado TEXT DEFAULT 'Pendiente'
                     );
                 """))
                 conn.execute(text("""
