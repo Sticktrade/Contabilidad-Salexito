@@ -566,19 +566,24 @@ def generate_pdf_deudas(df_deudas):
     table_data = [[
         Paragraph("Mes", header_cell), 
         Paragraph("Concepto", header_cell), 
-        Paragraph("Total", header_cell), 
-        Paragraph("Pendiente", header_cell), 
+        Paragraph("Total ($)", header_cell), 
+        Paragraph("Pendiente ($)", header_cell), 
         Paragraph("Historial Abonos", header_cell), 
         Paragraph("Estado", header_cell)
     ]]
     
+    tot_global = 0.0
     tot_pendiente_global = 0.0
+    tot_abonado_global = 0.0
+    
     for _, r in df_deudas.iterrows():
         total = float(r['monto_total'])
         abonado = float(r['monto_abonado'])
         pendiente = total - abonado
-        if r['estado'] != 'Saldada':
-            tot_pendiente_global += pendiente
+        
+        tot_global += total
+        tot_pendiente_global += pendiente
+        tot_abonado_global += abonado
             
         hist = str(r['historial_pagos']) if pd.notna(r['historial_pagos']) else ""
         
@@ -591,10 +596,13 @@ def generate_pdf_deudas(df_deudas):
             Paragraph(str(r['estado']), cell_style)
         ])
     
-    # Fila de Totalizador
+    # Fila de Totalizadores alineada a columnas
     table_data.append([
-        Paragraph("TOTAL ACUMULADO PENDIENTE", header_cell), "", "", 
-        Paragraph(f"${tot_pendiente_global:,.0f}".replace(",", "."), header_cell), "", ""
+        Paragraph("TOTALES ACUMULADOS", header_cell), "", 
+        Paragraph(f"${tot_global:,.0f}".replace(",", "."), header_cell), 
+        Paragraph(f"${tot_pendiente_global:,.0f}".replace(",", "."), header_cell), 
+        Paragraph(f"Abonos: ${tot_abonado_global:,.0f}".replace(",", "."), header_cell), 
+        ""
     ])
         
     t_deudas = Table(table_data, colWidths=[45, 120, 70, 70, 160, 55])
@@ -604,7 +612,7 @@ def generate_pdf_deudas(df_deudas):
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ('ROWBACKGROUNDS', (0,1), (-1,-2), [colors.white, colors.HexColor('#f8fafc')]),
         ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#be123c')),
-        ('SPAN', (0,-1), (2,-1)),
+        ('SPAN', (0,-1), (1,-1)),
         ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')),
     ]))
     story.append(t_deudas)
@@ -1334,6 +1342,7 @@ with tabs[6]:
         if not df_pendientes.empty:
             st.markdown("##### ⏳ Registrar Abono a Deuda")
             
+            # El selector queda FUERA del form para cargar los datos dinámicamente
             opciones_selector = []
             for _, r in df_pendientes.iterrows():
                 falta = float(r['monto_total']) - float(r['monto_abonado'])
@@ -1344,63 +1353,68 @@ with tabs[6]:
             idx_sel = opciones_selector.index(deuda_sel)
             deuda_actual = df_pendientes.iloc[idx_sel]
 
-            col_ab1, col_ab2 = st.columns([1, 2])
-            with col_ab1:
-                max_abonar = float(deuda_actual['monto_total']) - float(deuda_actual['monto_abonado'])
-                monto_abono = st.number_input("Monto a abonar HOY ($):", min_value=0.0, max_value=max_abonar, step=1000.0, format="%d", value=None)
-                fecha_abono = st.date_input("Fecha del abono (Salida de caja):", value=date.today())
-            
-            with col_ab2:
-                tot_str = f"${float(deuda_actual['monto_total']):,.0f}".replace(",", ".")
-                ab_str = f"${float(deuda_actual['monto_abonado']):,.0f}".replace(",", ".")
+            # El formulario evita que Streamlit recargue la app al escribir montos o fechas
+            with st.form("form_registro_abono", clear_on_submit=True):
+                col_ab1, col_ab2 = st.columns([1, 2])
+                with col_ab1:
+                    max_abonar = float(deuda_actual['monto_total']) - float(deuda_actual['monto_abonado'])
+                    monto_abono = st.number_input("Monto a abonar HOY ($):", min_value=0.0, max_value=max_abonar, step=1000.0, format="%d", value=None)
+                    fecha_abono = st.date_input("Fecha del abono (Salida de caja):", value=date.today())
                 
-                st.write("") 
-                html_info = f"""
-                <div style="background-color: #eff6ff; padding: 12px; border-radius: 8px; border: 1px solid #bfdbfe; color: #1e3a8a; font-family: sans-serif; margin-bottom: 15px;">
-                    <span style="font-size: 15px;"><b>Deuda Total:</b> {tot_str} &nbsp;|&nbsp; <b>Abonado hasta ahora:</b> {ab_str}</span>
-                </div>
-                """
-                st.markdown(html_info, unsafe_allow_html=True)
-                
-                if st.button("💸 Registrar Abono", type="primary"):
-                    if monto_abono is not None and monto_abono > 0:
-                        nuevo_abonado = float(deuda_actual['monto_abonado']) + float(monto_abono)
-                        deuda_total = float(deuda_actual['monto_total'])
-                        nuevo_estado = str('Saldada' if nuevo_abonado >= deuda_total else 'Pendiente')
-                        deuda_id = int(deuda_actual['id'])
-                        fecha_str = str(fecha_abono.strftime("%Y-%m-%d"))
-                        
-                        # Generar string de historial
-                        hist_actual = str(deuda_actual['historial_pagos']) if pd.notna(deuda_actual['historial_pagos']) else ""
-                        nuevo_registro = f"{fecha_str}: ${monto_abono:,.0f}".replace(",", ".")
-                        nuevo_historial = f"{hist_actual} | {nuevo_registro}".strip(" | ")
-                        
-                        concepto_gasto = str(f"Abono a deuda: {deuda_actual['concepto']} (Origen: {deuda_actual['mes_origen']})")
-                        monto_gasto_insert = float(-abs(monto_abono))
-                        
-                        with engine.begin() as conn:
-                            if db_type == "postgres": conn.execute(text("SET search_path TO public;"))
+                with col_ab2:
+                    tot_str = f"${float(deuda_actual['monto_total']):,.0f}".replace(",", ".")
+                    ab_str = f"${float(deuda_actual['monto_abonado']):,.0f}".replace(",", ".")
+                    
+                    st.write("") 
+                    html_info = f"""
+                    <div style="background-color: #eff6ff; padding: 12px; border-radius: 8px; border: 1px solid #bfdbfe; color: #1e3a8a; font-family: sans-serif; margin-bottom: 15px;">
+                        <span style="font-size: 15px;"><b>Deuda Total:</b> {tot_str} &nbsp;|&nbsp; <b>Abonado hasta ahora:</b> {ab_str}</span>
+                    </div>
+                    """
+                    st.markdown(html_info, unsafe_allow_html=True)
+                    
+                    submit_abono = st.form_submit_button("💸 Registrar Abono", type="primary")
+                    
+                    if submit_abono:
+                        if monto_abono is not None and monto_abono > 0:
+                            nuevo_abonado = float(deuda_actual['monto_abonado']) + float(monto_abono)
+                            deuda_total = float(deuda_actual['monto_total'])
+                            nuevo_estado = str('Saldada' if nuevo_abonado >= deuda_total else 'Pendiente')
+                            deuda_id = int(deuda_actual['id'])
+                            fecha_str = str(fecha_abono.strftime("%Y-%m-%d"))
+                            
+                            hist_actual = str(deuda_actual['historial_pagos']) if pd.notna(deuda_actual['historial_pagos']) else ""
+                            nuevo_registro = f"{fecha_str}: ${monto_abono:,.0f}".replace(",", ".")
+                            nuevo_historial = f"{hist_actual} | {nuevo_registro}".strip(" | ")
+                            
+                            concepto_gasto = str(f"Abono a deuda: {deuda_actual['concepto']} (Origen: {deuda_actual['mes_origen']})")
+                            monto_gasto_insert = float(-abs(monto_abono))
+                            
+                            with engine.begin() as conn:
+                                if db_type == "postgres": conn.execute(text("SET search_path TO public;"))
+                                    
+                                conn.execute(text("""
+                                    UPDATE public.cuentas_por_pagar 
+                                    SET monto_abonado = :abonado, estado = :estado, historial_pagos = :hist 
+                                    WHERE id = :id
+                                """), {"abonado": nuevo_abonado, "estado": nuevo_estado, "hist": nuevo_historial, "id": deuda_id})
                                 
-                            conn.execute(text("""
-                                UPDATE public.cuentas_por_pagar 
-                                SET monto_abonado = :abonado, estado = :estado, historial_pagos = :hist 
-                                WHERE id = :id
-                            """), {"abonado": nuevo_abonado, "estado": nuevo_estado, "hist": nuevo_historial, "id": deuda_id})
-                            
-                            conn.execute(text("""
-                                INSERT INTO public.gastos_mensuales (fecha, concepto, monto, categoria)
-                                VALUES (:fecha, :concepto, :monto, 'Pago Deuda/Terceros');
-                            """), {"fecha": fecha_str, "concepto": concepto_gasto, "monto": monto_gasto_insert})
-                            
-                        st.cache_data.clear()
-                        st.success("Abono registrado exitosamente.")
-                        st.rerun()
+                                conn.execute(text("""
+                                    INSERT INTO public.gastos_mensuales (fecha, concepto, monto, categoria)
+                                    VALUES (:fecha, :concepto, :monto, 'Pago Deuda/Terceros');
+                                """), {"fecha": fecha_str, "concepto": concepto_gasto, "monto": monto_gasto_insert})
+                                
+                            st.cache_data.clear()
+                            st.success("Abono registrado exitosamente.")
+                            st.rerun()
                         
         # 3. Resumen Visual Histórico (Tabla HTML Bonita)
         st.divider()
         st.markdown("##### 📊 Resumen Histórico de Deudas")
         
+        tot_global = 0.0
         tot_pendiente_global = 0.0
+        tot_abonado_global = 0.0
         
         html_deudas = """<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; background-color:#ffffff; color:#0f172a; border:1px solid #cbd5e1; font-family:sans-serif; border-radius:8px;">
           <thead><tr style="background-color:#0284c7; color:#ffffff; font-weight:bold; text-align:left;">
@@ -1417,8 +1431,10 @@ with tabs[6]:
             tot = float(r['monto_total'])
             abo = float(r['monto_abonado'])
             pen = tot - abo
-            if r['estado'] != 'Saldada':
-                tot_pendiente_global += pen
+            
+            tot_global += tot
+            tot_pendiente_global += pen
+            tot_abonado_global += abo
             
             tot_f = f"${tot:,.0f}".replace(",", ".")
             pen_f = f"${pen:,.0f}".replace(",", ".")
@@ -1436,10 +1452,17 @@ with tabs[6]:
               <td style="padding:8px; border:1px solid #e2e8f0; text-align:center;">{estado_badge}</td>
             </tr>"""
             
+        tot_g_f = f"${tot_global:,.0f}".replace(",", ".")
+        tot_p_f = f"${tot_pendiente_global:,.0f}".replace(",", ".")
+        tot_a_f = f"${tot_abonado_global:,.0f}".replace(",", ".")
+        
+        # Fila Final expandida para mostrar todas las métricas distribuidas en sus columnas
         html_deudas += f"""<tr style="background-color:#ffe4e6; color:#be123c; font-weight:bold;">
-              <td colspan="3" style="padding:10px; border:1px solid #fecdd3; text-align:right;">TOTAL DEUDA PENDIENTE ACUMULADA</td>
-              <td style="padding:10px; border:1px solid #fecdd3; text-align:right; font-size:15px;">${tot_pendiente_global:,.0f}</td>
-              <td colspan="2" style="padding:10px; border:1px solid #fecdd3;"></td>
+              <td colspan="2" style="padding:10px; border:1px solid #fecdd3; text-align:right;">TOTALES ACUMULADOS</td>
+              <td style="padding:10px; border:1px solid #fecdd3; text-align:right; font-size:14px;">{tot_g_f}</td>
+              <td style="padding:10px; border:1px solid #fecdd3; text-align:right; font-size:14px;">{tot_p_f}</td>
+              <td style="padding:10px; border:1px solid #fecdd3; text-align:left; font-size:14px; color:#9f1239;">Abonos: {tot_a_f}</td>
+              <td style="padding:10px; border:1px solid #fecdd3;"></td>
             </tr>"""
             
         html_deudas += "</tbody></table></div>"
@@ -1449,7 +1472,7 @@ with tabs[6]:
         st.write("")
         st.download_button(label="📄 Exportar Histórico a PDF", data=pdf_bytes_deudas, file_name=f"Reporte_Deudas_{date.today().strftime('%Y-%m-%d')}.pdf", mime="application/pdf", type="primary")
 
-        # 4. Modo Edición Estricto (Oculto por defecto para no romper el diseño)
+        # 4. Modo Edición Estricto 
         with st.expander("✏️ Modo Edición (Modificar montos o eliminar deudas con error)"):
             df_editor_deudas = st.data_editor(
                 df_deudas[['id', 'mes_origen', 'concepto', 'monto_total', 'monto_abonado', 'historial_pagos', 'estado']],
