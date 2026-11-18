@@ -66,10 +66,21 @@ def connect_gmail():
     mail.login(GMAIL_USER, GMAIL_PASS)
     return mail
 
+def select_mailbox(mail):
+    status, folders = mail.list()
+    if status == "OK" and folders:
+        for folder in folders:
+            decoded = folder.decode("utf-8", errors="ignore")
+            if "\\All" in decoded:
+                mailbox_name = decoded.split(' "/" ')[-1].strip()
+                res, _ = mail.select(mailbox_name)
+                if res == "OK":
+                    return
+    mail.select("INBOX")
+
 def fetch_corte_attachments():
     mail = connect_gmail()
-    # "[Gmail]/All Mail" busca en recibidos y archivados; si prefieres solo recibidos, usa "inbox"
-    mail.select('"[Gmail]/All Mail"')
+    select_mailbox(mail)
 
     # Construir consulta nativa de Gmail: subject:(Corte OR CUENTAS) has:attachment newer_than:15d
     asuntos_query = " OR ".join(ASUNTOS_BUSQUEDA)
